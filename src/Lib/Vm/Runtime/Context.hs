@@ -13,7 +13,8 @@ pop (Stack (x : xs)) = (Just x, Stack xs)
 pop (Stack []) = (Nothing, Stack [])
 
 data InterpretState = InterpretState
-  { stack :: Stack RS.StackEntry
+  { stack :: Stack RS.StackEntry,
+    frame :: Maybe RS.Frame -- TODO: Does a frame always have to exist?
   }
 
 type InterpretError = String
@@ -81,9 +82,6 @@ numberFromStack =
   popStack >>= \e -> case e of
     (RS.StackValue (RS.Number v)) -> return v
     _ -> trapError "Item on stack not a number"
-
-i32FromStack :: InterpretContext RS.I32
-i32FromStack = error "h"
 
 refFromStack :: InterpretContext RS.RefValue
 refFromStack =

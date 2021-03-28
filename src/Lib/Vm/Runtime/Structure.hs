@@ -157,4 +157,3 @@ data StackEntry
   = StackValue Value
   | StackLabel Label
   | StackActivation Activation
-  | StackFrame Frame

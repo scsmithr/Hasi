@@ -37,7 +37,7 @@ interpretBinaryOp op = do
     (Left e) -> trapError e
 
 interpretTestOp :: InterpretContext ()
-interpretTestOp = numberFromStack >>= \v -> pushStack $ testValue v
+interpretTestOp = numberFromStack >>= pushStack . testValue
   where
     testValue (RS.U32 0) = RS.StackValue $ RS.Number $ RS.I32 1
     testValue (RS.U64 0) = RS.StackValue $ RS.Number $ RS.I32 1
