@@ -1,80 +1,71 @@
 module Lib.Vm.Runtime.Interpret where
 
 import Control.Monad
+import Lib.Vm.Runtime.Context
 import qualified Lib.Vm.Runtime.Structure as RS
 
-newtype Stack a = Stack [a]
-
-push :: a -> Stack a -> Stack a
-push x (Stack xs) = Stack (x : xs)
-
-pop :: Stack a -> (Maybe a, Stack a)
-pop (Stack (x : xs)) = (Just x, Stack xs)
-pop (Stack []) = (Nothing, Stack [])
-
-data InterpretState = InterpretState
-  { stack :: Stack RS.StackEntry
-  }
-
-type InterpretError = String
-
-newtype InterpretContext a = InterpretContext
-  { runContext :: InterpretState -> Either InterpretError (a, InterpretState)
-  }
-
-instance Monad InterpretContext where
-  return x = InterpretContext $ \s -> Right (x, s)
-  i >>= k = InterpretContext $ \s -> case runContext i s of
-    Left e -> Left e
-    Right (x, s') -> runContext (k x) s'
-
-instance Functor InterpretContext where
-  fmap = liftM
-
-instance Applicative InterpretContext where
-  pure = return
-  (<*>) = ap
-
-pushStack :: RS.StackEntry -> InterpretContext ()
-pushStack entry = InterpretContext $ \s -> Right ((), modifyStack s)
-  where
-    modifyStack state@InterpretState {stack = s} = state {stack = push entry s}
-
-popStack :: InterpretContext RS.StackEntry
-popStack = InterpretContext $ \s -> case pop (stack s) of
-  (Just val, stack') -> Right (val, s {stack = stack'})
-  _ -> Left "No more values on stack"
-
-trapError :: InterpretError -> InterpretContext ()
-trapError e = InterpretContext $ \_ -> Left e
+i32sentinel :: RS.NumberValue
+i32sentinel = RS.I32 0
 
 interpret :: RS.Instruction -> InterpretContext ()
 interpret (RS.InsTConst val) = pushStack $ RS.StackValue $ RS.Number val
 interpret (RS.InsTUnop op) = interpretUnaryOp op
 interpret (RS.InsTBinop op) = interpretBinaryOp op
+interpret RS.InsTTestop = interpretTestOp
+interpret (RS.InsTRelop op) = interpretRelOp op
+interpret RS.InsRefNull = pushStack $ RS.StackValue $ RS.Ref RS.RefNull
+interpret RS.InsRefIsNull = refFromStack >>= pushBool . (RS.RefNull ==)
+interpret RS.InsDrop = void valueFromStack
 interpret _ = error "unimplemented"
 
 interpretUnaryOp :: RS.UnaryOp -> InterpretContext ()
 interpretUnaryOp op = do
-  entry <- popStack
-  let res = case entry of
-        (RS.StackValue (RS.Number v)) -> evalUnaryOp op v
-        -- TODO: Function value?
-        _ -> Left "Invalid value type on stack"
+  v <- numberFromStack
+  let res = evalUnaryOp op v
   case res of
-    (Right v) -> pushStack $ RS.StackValue $ RS.Number v
+    (Right r) -> pushStack $ RS.StackValue $ RS.Number r
     (Left e) -> trapError e
 
 interpretBinaryOp :: RS.BinaryOp -> InterpretContext ()
 interpretBinaryOp op = do
-  e1 <- popStack
-  e2 <- popStack
-  let res = case (e1, e2) of
-        (RS.StackValue (RS.Number v1), RS.StackValue (RS.Number v2)) -> evalBinaryOp op v1 v2
-        _ -> Left "Invalid value types on stack"
+  v2 <- numberFromStack
+  v1 <- numberFromStack
+  _ <- assertNumericTypes v1 v2 EqualityExact
+  let res = evalBinaryOp op v1 v2
   case res of
     (Right v) -> pushStack $ RS.StackValue $ RS.Number v
     (Left e) -> trapError e
+
+interpretTestOp :: InterpretContext ()
+interpretTestOp = numberFromStack >>= \v -> pushStack $ testValue v
+  where
+    testValue (RS.U32 0) = RS.StackValue $ RS.Number $ RS.I32 1
+    testValue (RS.U64 0) = RS.StackValue $ RS.Number $ RS.I32 1
+    testValue (RS.I32 0) = RS.StackValue $ RS.Number $ RS.I32 1
+    testValue (RS.I64 0) = RS.StackValue $ RS.Number $ RS.I32 1
+    testValue _ = RS.StackValue $ RS.Number $ RS.I32 0
+
+interpretRelOp :: RS.RelOp -> InterpretContext ()
+interpretRelOp op = do
+  v2 <- numberFromStack
+  v1 <- numberFromStack
+  _ <- assertNumericTypes v1 v2 EqualityExact
+  let res = evalRelOp op v1 v2
+  case res of
+    (Right r) -> pushStack $ RS.StackValue $ RS.Number r
+    (Left e) -> trapError e
+
+interpretSelect :: InterpretContext ()
+interpretSelect = do
+  c <- numberFromStack
+  _ <- assertNumericTypes c i32sentinel EqualityExact
+  v2 <- valueFromStack
+  v1 <- valueFromStack
+  _ <- assertValueTypesEq v1 v2
+  case c of
+    (RS.I32 0) -> pushStack $ RS.StackValue v2
+    (RS.I32 _) -> pushStack $ RS.StackValue v2
+    otherwise -> trapError "Asserted i32, but wasn't i32" -- Shouldn't happen
 
 -- TODO: Implement me
 evalBinaryOp ::
@@ -86,11 +77,12 @@ evalBinaryOp _op _v1 _v2 = Right $ RS.U64 0
 
 -- TODO: Implement me
 evalUnaryOp :: RS.UnaryOp -> RS.NumberValue -> Either InterpretError RS.NumberValue
-evalUnaryOp (RS.NumericUnaryOp _) _val = Right $ RS.U64 0
-evalUnaryOp (RS.FuncUnaryOp RS.FuncUnopAbs) val = Right val
-evalUnaryOp (RS.FuncUnaryOp RS.FuncUnopNeg) val = Right val
-evalUnaryOp (RS.FuncUnaryOp RS.FuncUnopSqrt) val = Right val
-evalUnaryOp (RS.FuncUnaryOp RS.FuncUnopCeil) val = Right val
-evalUnaryOp (RS.FuncUnaryOp RS.FuncUnopFloor) val = Right val
-evalUnaryOp (RS.FuncUnaryOp RS.FuncUnopTrunc) val = Right val
-evalUnaryOp (RS.FuncUnaryOp RS.FuncUnopNearest) val = Right val
+evalUnaryOp _op _val = Right $ RS.U64 0
+
+-- TODO: Implement me
+evalRelOp ::
+  RS.RelOp ->
+  RS.NumberValue ->
+  RS.NumberValue ->
+  Either InterpretError RS.NumberValue
+evalRelOp _op _v1 _v2 = Right $ RS.I32 0
