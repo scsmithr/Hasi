@@ -14,7 +14,8 @@ pop (Stack []) = (Nothing, Stack [])
 
 data InterpretState = InterpretState
   { stack :: Stack RS.StackEntry,
-    frame :: Maybe RS.Frame -- TODO: Does a frame always have to exist?
+    frame :: Maybe RS.Frame, -- TODO: Does a frame always have to exist?
+    store :: RS.Store
   }
   deriving (Show, Eq)
 
@@ -46,6 +47,34 @@ popStack :: InterpretContext RS.StackEntry
 popStack = InterpretContext $ \s -> case pop (stack s) of
   (Just val, stack') -> Right (val, s {stack = stack'})
   _ -> Left "No more values on stack"
+
+currentFrame :: InterpretContext RS.Frame
+currentFrame = InterpretContext $ \s -> case frame s of
+  (Just x) -> Right (x, s)
+  _ -> Left "No frame"
+
+setCurrentFrameLocal :: Int -> RS.Value -> InterpretContext ()
+setCurrentFrameLocal idx val = InterpretContext $ \s -> case frame s of
+  (Just x) -> Right ((), s {frame = Just $ modifyFrame x})
+  _ -> Left "No frame"
+  where
+    modifyFrame f@RS.Frame {RS.frameLocals = l} = f {RS.frameLocals = insertValue l}
+    insertValue values = let (xs, ys) = splitAt idx values in xs ++ (val : (tail ys))
+
+getGlobalInstance :: RS.Addr -> InterpretContext RS.GlobalInst
+getGlobalInstance addr = InterpretContext $ \s -> Right (globalInst s, s)
+  where
+    globalInst s = RS.instAtAddr (store s) addr RS.sGlobals
+
+setGlobalInstance :: RS.Addr -> RS.Value -> InterpretContext ()
+setGlobalInstance addr val = InterpretContext $ \s -> Right ((), s {store = modifyStore (store s)})
+  where
+    modifyStore s@RS.Store {RS.sGlobals = globs} = s {RS.sGlobals = insertValue globs}
+    insertValue globs =
+      let (xs, ys) = splitAt (intAddr addr) globs
+       in xs ++ ((replaced globs) {RS.gValue = val} : tail ys)
+    replaced globs = globs !! intAddr addr
+    intAddr (RS.Addr w) = w
 
 trapError :: InterpretError -> InterpretContext a
 trapError e = InterpretContext $ \_ -> Left e

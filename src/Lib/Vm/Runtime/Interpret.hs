@@ -16,6 +16,12 @@ interpret (RS.InsTRelop op) = interpretRelOp op
 interpret RS.InsRefNull = pushStack $ RS.StackValue $ RS.Ref RS.RefNull
 interpret RS.InsRefIsNull = refFromStack >>= pushBool . (RS.RefNull ==)
 interpret RS.InsDrop = void valueFromStack
+interpret RS.InsSelect = interpretSelect
+interpret (RS.InsLocalGet idx) = interpretLocalGet idx
+interpret (RS.InsLocalSet idx) = interpretLocalSet idx
+interpret (RS.InsLocalTee idx) = interpretLocalTee idx
+interpret (RS.InsGlobalGet idx) = interpretGlobalGet idx
+interpret (RS.InsGlobalSet idx) = interpretGlobalSet idx
 interpret _ = error "unimplemented"
 
 interpretUnaryOp :: RS.UnaryOp -> InterpretContext ()
@@ -67,6 +73,40 @@ interpretSelect = do
     (RS.IntValue (RS.I32 0)) -> pushStack $ RS.StackValue v1
     (RS.IntValue (RS.I32 _)) -> pushStack $ RS.StackValue v2
     _ -> trapError "Asserted i32, but wasn't i32" -- Shouldn't happen
+
+interpretLocalGet :: Int -> InterpretContext ()
+interpretLocalGet idx = do
+  f <- currentFrame
+  let local = RS.frameLocals f !! idx -- TODO: Assert index exists.
+  pushStack $ RS.StackValue local
+
+interpretLocalSet :: Int -> InterpretContext ()
+interpretLocalSet idx = do
+  _ <- currentFrame -- TODO: Should probably remove if frame is always required.
+  val <- valueFromStack
+  setCurrentFrameLocal idx val
+
+interpretLocalTee :: Int -> InterpretContext ()
+interpretLocalTee idx = do
+  val <- valueFromStack
+  _ <- pushStack $ RS.StackValue val
+  _ <- pushStack $ RS.StackValue val
+  interpret (RS.InsLocalSet idx)
+
+interpretGlobalGet :: Int -> InterpretContext ()
+interpretGlobalGet idx = do
+  f <- currentFrame
+  let addr = (!! idx) $ RS.mGlobalAddrs $ RS.frameModule f
+  glob <- getGlobalInstance addr
+  let val = RS.gValue glob
+  pushStack $ RS.StackValue val
+
+interpretGlobalSet :: Int -> InterpretContext ()
+interpretGlobalSet idx = do
+  f <- currentFrame
+  let addr = (!! idx) $ RS.mGlobalAddrs $ RS.frameModule f
+  val <- valueFromStack
+  setGlobalInstance addr val
 
 -- TODO: Implement me
 evalBinaryOp ::

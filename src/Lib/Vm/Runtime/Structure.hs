@@ -1,6 +1,7 @@
 -- | Types and functions for the runtime structure of the vm.
 module Lib.Vm.Runtime.Structure where
 
+import qualified Data.ByteString as B
 import Data.Int
 import Data.Word
 import qualified Lib.Vm.Structure.Types as S
@@ -38,7 +39,7 @@ instance ValueTypeEq NumberValue where
   typeEq (FloatValue (F64 _)) (FloatValue (F64 _)) = True
   typeEq _ _ = False
 
-newtype Addr = Addr Word64 deriving (Eq, Show)
+newtype Addr = Addr Int deriving (Eq, Show)
 
 data RefValue
   = RefNull
@@ -73,6 +74,32 @@ data ExtValue = ExtFunc Addr | ExtTable Addr | ExtMem Addr | ExtGlobal Addr deri
 data ExportInst = ExportInst {eName :: S.Name, eValue :: ExtValue} deriving (Show, Eq)
 
 data FuncInst = FuncInst {fInstType :: S.FuncType, fModule :: ModuleInst} deriving (Show, Eq)
+
+data TableInst = TableInst {tInstType :: S.TableType, tElem :: [RefValue]} deriving (Show, Eq)
+
+data MemInst = MemInst {mInstType :: S.MemType, mBytes :: B.ByteString} deriving (Show, Eq)
+
+data GlobalInst = GlobalInst {gInstType :: S.ValueType, gValue :: Value} deriving (Show, Eq)
+
+data ElemInst = ElemInst {eInstType :: S.RefType, eElem :: [RefValue]} deriving (Show, Eq)
+
+newtype DataInst = DataInst {dData :: B.ByteString} deriving (Show, Eq)
+
+data Store = Store
+  { sFuncs :: [FuncInst],
+    sTables :: [TableInst],
+    sMems :: [MemInst],
+    sGlobals :: [GlobalInst],
+    sElems :: [ElemInst],
+    sDatas :: [DataInst]
+  }
+  deriving (Show, Eq)
+
+instAtAddr :: Store -> Addr -> (Store -> [a]) -> a
+instAtAddr store (Addr w) proj = proj store !! w
+
+emptyStore :: Store
+emptyStore = Store [] [] [] [] [] []
 
 data IntUnop = IntUnopClz | IntUnopCtz | IntUnopPopcount deriving (Show, Eq)
 
@@ -152,6 +179,11 @@ data Instruction
   | InsRefIsNull
   | InsDrop
   | InsSelect
+  | InsLocalGet Int
+  | InsLocalSet Int
+  | InsLocalTee Int
+  | InsGlobalGet Int
+  | InsGlobalSet Int
   deriving (Show, Eq)
 
 data Label = Label
