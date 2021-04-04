@@ -184,6 +184,9 @@ data Instruction
   | InsLocalTee Int
   | InsGlobalGet Int
   | InsGlobalSet Int
+  | InsTableGet Int
+  | InsTableSet Int
+  | InsTableFill Int
   deriving (Show, Eq)
 
 data Label = Label

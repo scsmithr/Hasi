@@ -1,6 +1,9 @@
+{-# LANGUAGE FlexibleContexts #-}
+
 module Lib.Vm.Runtime.Interpret (interpret) where
 
 import Control.Monad
+import Data.Int
 import Lib.Vm.Runtime.Context
 import qualified Lib.Vm.Runtime.Structure as RS
 
@@ -22,6 +25,8 @@ interpret (RS.InsLocalSet idx) = interpretLocalSet idx
 interpret (RS.InsLocalTee idx) = interpretLocalTee idx
 interpret (RS.InsGlobalGet idx) = interpretGlobalGet idx
 interpret (RS.InsGlobalSet idx) = interpretGlobalSet idx
+interpret (RS.InsTableGet idx) = interpretTableGet idx
+interpret (RS.InsTableSet idx) = interpretTableSet idx
 interpret _ = error "unimplemented"
 
 interpretUnaryOp :: RS.UnaryOp -> InterpretContext ()
@@ -96,7 +101,7 @@ interpretLocalTee idx = do
 interpretGlobalGet :: Int -> InterpretContext ()
 interpretGlobalGet idx = do
   f <- currentFrame
-  let addr = (!! idx) $ RS.mGlobalAddrs $ RS.frameModule f
+  addr <- addrFromFrameModule ((!! idx) . RS.mGlobalAddrs)
   glob <- getGlobalInstance addr
   let val = RS.gValue glob
   pushStack $ RS.StackValue val
@@ -104,9 +109,41 @@ interpretGlobalGet idx = do
 interpretGlobalSet :: Int -> InterpretContext ()
 interpretGlobalSet idx = do
   f <- currentFrame
-  let addr = (!! idx) $ RS.mGlobalAddrs $ RS.frameModule f
+  addr <- addrFromFrameModule ((!! idx) . RS.mGlobalAddrs)
   val <- valueFromStack
   setGlobalInstance addr val
+
+interpretTableGet :: Int -> InterpretContext ()
+interpretTableGet idx = do
+  addr <- addrFromFrameModule ((!! idx) . RS.mTableAddrs)
+  tab <- getTableInstance addr
+  i <- numberFromStack >>= liftEither . unwrapI32
+  let ii = fromIntegral i :: Int
+  case ii < length (RS.tElem tab) of
+    True -> pushStack $ RS.StackValue $ RS.Ref $ RS.tElem tab !! ii
+    False -> trapError "Index out of bounds"
+
+interpretTableSet :: Int -> InterpretContext ()
+interpretTableSet idx = do
+  addr <- addrFromFrameModule ((!! idx) . RS.mTableAddrs)
+  tab <- getTableInstance addr
+  r <- refFromStack
+  i <- numberFromStack >>= liftEither . unwrapI32
+  let ii = fromIntegral i :: Int
+  case ii < length (RS.tElem tab) of
+    True -> setTableElem addr ii r
+    False -> trapError "Index out of bounds"
+
+interpretTableFill :: Int -> InterpretContext ()
+interpretTableFill idx = do
+  addr <- addrFromFrameModule ((!! idx) . RS.mTableAddrs)
+  tab <- getTableInstance addr
+  n <- numberFromStack
+  _ <- assertNumericTypes n i32sentinel EqualityExact
+  val <- refFromStack
+  i <- numberFromStack
+  _ <- assertNumericTypes i i32sentinel EqualityExact
+  return () -- TODO
 
 -- TODO: Implement me
 evalBinaryOp ::
@@ -143,3 +180,7 @@ evalRelOp ::
   RS.NumberValue ->
   Either InterpretError RS.NumberValue
 evalRelOp _op _v1 _v2 = Right $ RS.IntValue $ RS.I32 0
+
+unwrapI32 :: RS.NumberValue -> Either InterpretError Int32
+unwrapI32 (RS.IntValue (RS.I32 v)) = Right v
+unwrapI32 _ = Left "Number value not an i32"
