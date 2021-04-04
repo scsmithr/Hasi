@@ -8,9 +8,6 @@ import Data.List
 import Lib.Runtime.Context
 import qualified Lib.Runtime.Structure as RS
 
-i32sentinel :: RS.NumberValue
-i32sentinel = RS.IntValue $ RS.I32 0
-
 interpret :: RS.Instruction -> InterpretContext ()
 interpret (RS.InsTConst val) = pushStack $ RS.StackValue $ RS.Number val
 interpret (RS.InsTUnop op) = interpretUnaryOp op
@@ -76,15 +73,13 @@ interpretRelOp op = do
 
 interpretSelect :: InterpretContext ()
 interpretSelect = do
-  c <- numberFromStack
-  _ <- assertNumericTypes c i32sentinel EqualityExact
+  c <- popUnwrapI32
   v2 <- valueFromStack
   v1 <- valueFromStack
   _ <- assertValueTypesEq v1 v2
   case c of
-    (RS.IntValue (RS.I32 0)) -> pushStack $ RS.StackValue v1
-    (RS.IntValue (RS.I32 _)) -> pushStack $ RS.StackValue v2
-    _ -> trapError "Asserted i32, but wasn't i32" -- Shouldn't happen
+    0 -> pushStack $ RS.StackValue v1
+    _ -> pushStack $ RS.StackValue v2
 
 interpretLocalGet :: Int -> InterpretContext ()
 interpretLocalGet idx = do
@@ -94,7 +89,6 @@ interpretLocalGet idx = do
 
 interpretLocalSet :: Int -> InterpretContext ()
 interpretLocalSet idx = do
-  _ <- currentFrame -- TODO: Should probably remove if frame is always required.
   val <- valueFromStack
   setCurrentFrameLocal idx val
 
@@ -107,7 +101,6 @@ interpretLocalTee idx = do
 
 interpretGlobalGet :: Int -> InterpretContext ()
 interpretGlobalGet idx = do
-  f <- currentFrame
   addr <- addrFromFrameModule ((!! idx) . RS.mGlobalAddrs)
   glob <- getGlobalInstance addr
   let val = RS.gValue glob
@@ -115,16 +108,14 @@ interpretGlobalGet idx = do
 
 interpretGlobalSet :: Int -> InterpretContext ()
 interpretGlobalSet idx = do
-  f <- currentFrame
   addr <- addrFromFrameModule ((!! idx) . RS.mGlobalAddrs)
   val <- valueFromStack
   setGlobalInstance addr val
 
 interpretTableGet :: Int -> InterpretContext ()
 interpretTableGet idx = do
-  addr <- addrFromFrameModule ((!! idx) . RS.mTableAddrs)
-  tab <- getTableInstance addr
-  i <- numberFromStack >>= liftEither . unwrapI32
+  (_, tab) <- tableAddrInstPair idx
+  i <- popUnwrapI32
   let ii = fromIntegral i :: Int
   case ii < length (RS.tElem tab) of
     True -> pushStack $ RS.StackValue $ RS.Ref $ RS.tElem tab !! ii
@@ -132,10 +123,9 @@ interpretTableGet idx = do
 
 interpretTableSet :: Int -> InterpretContext ()
 interpretTableSet idx = do
-  addr <- addrFromFrameModule ((!! idx) . RS.mTableAddrs)
-  tab <- getTableInstance addr
+  (addr, tab) <- tableAddrInstPair idx
   r <- refFromStack
-  i <- numberFromStack >>= liftEither . unwrapI32
+  i <- popUnwrapI32
   let ii = fromIntegral i :: Int
   case ii < length (RS.tElem tab) of
     True ->
@@ -145,17 +135,15 @@ interpretTableSet idx = do
 
 interpretTableSize :: Int -> InterpretContext ()
 interpretTableSize idx = do
-  addr <- addrFromFrameModule ((!! idx) . RS.mTableAddrs)
-  tab <- getTableInstance addr
+  (_, tab) <- tableAddrInstPair idx
   let sz = length (RS.tElem tab)
   pushI32 sz
 
 interpretTableGrow :: Int -> InterpretContext ()
 interpretTableGrow idx = do
-  addr <- addrFromFrameModule ((!! idx) . RS.mTableAddrs)
-  tab <- getTableInstance addr
+  (addr, tab) <- tableAddrInstPair idx
   let sz = length (RS.tElem tab)
-  n <- numberFromStack >>= liftEither . unwrapI32
+  n <- popUnwrapI32
   r <- refFromStack
   let elems = RS.tElem tab ++ genericReplicate n r
   let updated = tab {RS.tElem = elems}
@@ -164,11 +152,10 @@ interpretTableGrow idx = do
 
 interpretTableFill :: Int -> InterpretContext ()
 interpretTableFill idx = do
-  addr <- addrFromFrameModule ((!! idx) . RS.mTableAddrs)
-  tab <- getTableInstance addr
-  n <- numberFromStack >>= liftEither . unwrapI32
+  (_, tab) <- tableAddrInstPair idx
+  n <- popUnwrapI32
   val <- refFromStack
-  i <- numberFromStack >>= liftEither . unwrapI32
+  i <- popUnwrapI32
   let run
         | i + n > genericLength (RS.tElem tab) = trapError "Index out of bounds"
         | n == 0 = return ()
