@@ -89,16 +89,21 @@ setGlobalInstance addr val = InterpretContext $ \s -> Right ((), s {store = modi
 getTableInstance :: RS.Addr -> InterpretContext RS.TableInst
 getTableInstance = getInstance RS.sTables
 
--- TODO: Pass in updated table?
-setTableElem :: RS.Addr -> Int -> RS.RefValue -> InterpretContext ()
-setTableElem addr idx ref = InterpretContext $ \s -> Right ((), s {store = modifyStore (store s)})
+-- | Set a table at the given address.
+setTable :: RS.Addr -> RS.TableInst -> InterpretContext ()
+setTable addr tab = InterpretContext $ \s -> Right ((), s {store = modifyStore (store s)})
   where
     modifyStore s@RS.Store {RS.sTables = tabs} = s {RS.sTables = replaceTable tabs}
-    replaceTable tabs =
-      let addrIdx = unwrapAddr addr
-          tab = tabs !! addrIdx
-       in replaceValue addrIdx (tab {RS.tElem = replaceElem (RS.tElem tab)}) tabs
-    replaceElem refs = replaceValue idx ref refs
+    replaceTable tabs = replaceValue (unwrapAddr addr) tab tabs
+
+getElemInstance :: RS.Addr -> InterpretContext RS.ElemInst
+getElemInstance = getInstance RS.sElems
+
+setElemInstance :: RS.Addr -> RS.ElemInst -> InterpretContext ()
+setElemInstance addr updated = InterpretContext $ \s -> Right ((), s {store = modifyStore (store s)})
+  where
+    modifyStore s@RS.Store {RS.sElems = elems} = s {RS.sElems = replaceElem elems}
+    replaceElem elems = replaceValue (unwrapAddr addr) updated elems
 
 replaceValue :: Int -> a -> [a] -> [a]
 replaceValue idx val list =
@@ -165,7 +170,3 @@ refFromStack =
   popStack >>= \e -> case e of
     (RS.StackValue (RS.Ref v)) -> return v
     _ -> trapError "Item on stack not a ref"
-
-pushBool :: Bool -> InterpretContext ()
-pushBool True = pushStack $ RS.StackValue $ RS.Number $ RS.IntValue $ RS.I32 1
-pushBool False = pushStack $ RS.StackValue $ RS.Number $ RS.IntValue $ RS.I32 0

@@ -4,6 +4,7 @@ module Lib.Vm.Runtime.Interpret (interpret) where
 
 import Control.Monad
 import Data.Int
+import Data.List
 import Lib.Vm.Runtime.Context
 import qualified Lib.Vm.Runtime.Structure as RS
 
@@ -27,6 +28,12 @@ interpret (RS.InsGlobalGet idx) = interpretGlobalGet idx
 interpret (RS.InsGlobalSet idx) = interpretGlobalSet idx
 interpret (RS.InsTableGet idx) = interpretTableGet idx
 interpret (RS.InsTableSet idx) = interpretTableSet idx
+interpret (RS.InsTableSize idx) = interpretTableSize idx
+interpret (RS.InsTableGrow idx) = interpretTableGrow idx
+interpret (RS.InsTableFill idx) = interpretTableFill idx
+interpret (RS.InsTableCopy idxX idxY) = interpretTableCopy idxX idxY
+interpret (RS.InsTableInit idxX idxY) = interpretTableInit idxX idxY
+interpret (RS.InsElemDrop idx) = interpretElemDrop idx
 interpret _ = error "unimplemented"
 
 interpretUnaryOp :: RS.UnaryOp -> InterpretContext ()
@@ -131,19 +138,111 @@ interpretTableSet idx = do
   i <- numberFromStack >>= liftEither . unwrapI32
   let ii = fromIntegral i :: Int
   case ii < length (RS.tElem tab) of
-    True -> setTableElem addr ii r
+    True ->
+      let updated = tab {RS.tElem = replaceValue ii r (RS.tElem tab)}
+       in setTable addr updated
     False -> trapError "Index out of bounds"
+
+interpretTableSize :: Int -> InterpretContext ()
+interpretTableSize idx = do
+  addr <- addrFromFrameModule ((!! idx) . RS.mTableAddrs)
+  tab <- getTableInstance addr
+  let sz = length (RS.tElem tab)
+  pushI32 sz
+
+interpretTableGrow :: Int -> InterpretContext ()
+interpretTableGrow idx = do
+  addr <- addrFromFrameModule ((!! idx) . RS.mTableAddrs)
+  tab <- getTableInstance addr
+  let sz = length (RS.tElem tab)
+  n <- numberFromStack >>= liftEither . unwrapI32
+  r <- refFromStack
+  let elems = RS.tElem tab ++ genericReplicate n r
+  let updated = tab {RS.tElem = elems}
+  _ <- setTable addr updated
+  pushI32 sz
 
 interpretTableFill :: Int -> InterpretContext ()
 interpretTableFill idx = do
   addr <- addrFromFrameModule ((!! idx) . RS.mTableAddrs)
   tab <- getTableInstance addr
-  n <- numberFromStack
-  _ <- assertNumericTypes n i32sentinel EqualityExact
+  n <- numberFromStack >>= liftEither . unwrapI32
   val <- refFromStack
-  i <- numberFromStack
-  _ <- assertNumericTypes i i32sentinel EqualityExact
-  return () -- TODO
+  i <- numberFromStack >>= liftEither . unwrapI32
+  let run
+        | i + n > genericLength (RS.tElem tab) = trapError "Index out of bounds"
+        | n == 0 = return ()
+        | otherwise =
+          pushI32 i
+            >> pushRef val
+            >> interpret (RS.InsTableSet idx)
+            >> pushI32 (i + 1)
+            >> pushRef val
+            >> pushI32 (n -1)
+            >> interpret (RS.InsTableFill idx)
+  run
+
+interpretTableCopy :: Int -> Int -> InterpretContext ()
+interpretTableCopy idxX idxY = do
+  (_, tabX) <- tableAddrInstPair idxX
+  (_, tabY) <- tableAddrInstPair idxY
+  n <- popUnwrapI32
+  s <- popUnwrapI32
+  d <- popUnwrapI32
+  let postRun :: InterpretContext ()
+      postRun = pushI32 (n -1) >> interpret (RS.InsTableCopy idxX idxY)
+
+      run :: InterpretContext ()
+      run
+        | s + n > genericLength (RS.tElem tabY) || d + n > genericLength (RS.tElem tabX) =
+          trapError "Index out of bounds"
+        | n == 0 = return ()
+        | d <= s =
+          pushI32 d
+            >> pushI32 s
+            >> interpret (RS.InsTableGet idxY)
+            >> interpret (RS.InsTableSet idxX)
+            >> pushI32 (d + 1)
+            >> pushI32 (s + 1)
+            >> postRun
+        | otherwise =
+          pushI32 (d + n -1)
+            >> pushI32 (s + n -1)
+            >> interpret (RS.InsTableGet idxY)
+            >> interpret (RS.InsTableSet idxX)
+            >> pushI32 d
+            >> pushI32 s
+            >> postRun
+  run
+
+interpretTableInit :: Int -> Int -> InterpretContext ()
+interpretTableInit idxX idxY = do
+  (_, tabX) <- tableAddrInstPair idxX
+  (_, elemY) <- elemAddrInstPair idxY
+  n <- popUnwrapI32
+  s <- popUnwrapI32
+  d <- popUnwrapI32
+  let run :: InterpretContext ()
+      run
+        | s + n > genericLength (RS.eElem elemY) || d + n > genericLength (RS.tElem tabX) =
+          trapError "Index out of bounds"
+        | n == 0 = return ()
+        | otherwise =
+          let val = RS.eElem elemY !! fromIntegral s
+           in pushI32 d
+                >> pushRef val
+                >> interpret (RS.InsTableSet idxX)
+                >> pushI32 (d + 1)
+                >> pushI32 (s + 1)
+                >> pushI32 (n -1)
+                >> interpret (RS.InsTableInit idxX idxY)
+  run
+
+interpretElemDrop :: Int -> InterpretContext ()
+interpretElemDrop idx = do
+  (addr, e) <- elemAddrInstPair idx
+  let updated = e {RS.eElem = []}
+  setElemInstance addr updated
 
 -- TODO: Implement me
 evalBinaryOp ::
@@ -184,3 +283,31 @@ evalRelOp _op _v1 _v2 = Right $ RS.IntValue $ RS.I32 0
 unwrapI32 :: RS.NumberValue -> Either InterpretError Int32
 unwrapI32 (RS.IntValue (RS.I32 v)) = Right v
 unwrapI32 _ = Left "Number value not an i32"
+
+pushBool :: Bool -> InterpretContext ()
+pushBool True = pushStack $ RS.StackValue $ RS.Number $ RS.IntValue $ RS.I32 1
+pushBool False = pushStack $ RS.StackValue $ RS.Number $ RS.IntValue $ RS.I32 0
+
+pushI32 :: Integral a => a -> InterpretContext ()
+pushI32 = pushStack . RS.StackValue . RS.Number . RS.IntValue . RS.I32 . fromIntegral
+
+popUnwrapI32 :: InterpretContext Int32
+popUnwrapI32 = numberFromStack >>= liftEither . unwrapI32
+
+pushRef :: RS.RefValue -> InterpretContext ()
+pushRef = pushStack . RS.StackValue . RS.Ref
+
+-- | Get the table address and instance pair from the current frame's module at
+-- the given index.
+tableAddrInstPair :: Int -> InterpretContext (RS.Addr, RS.TableInst)
+tableAddrInstPair idx = do
+  addr <- addrFromFrameModule ((!! idx) . RS.mTableAddrs)
+  tab <- getTableInstance addr
+  return (addr, tab)
+
+-- | Get the element address and instance from the current frame's module.
+elemAddrInstPair :: Int -> InterpretContext (RS.Addr, RS.ElemInst)
+elemAddrInstPair idx = do
+  addr <- addrFromFrameModule ((!! idx) . RS.mElemAddrs)
+  e <- getElemInstance addr
+  return (addr, e)

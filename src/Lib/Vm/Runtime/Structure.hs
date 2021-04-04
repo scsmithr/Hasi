@@ -186,7 +186,12 @@ data Instruction
   | InsGlobalSet Int
   | InsTableGet Int
   | InsTableSet Int
+  | InsTableSize Int
+  | InsTableGrow Int
   | InsTableFill Int
+  | InsTableCopy Int Int
+  | InsTableInit Int Int
+  | InsElemDrop Int
   deriving (Show, Eq)
 
 data Label = Label
