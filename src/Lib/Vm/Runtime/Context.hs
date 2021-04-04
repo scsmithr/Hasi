@@ -3,7 +3,7 @@ module Lib.Vm.Runtime.Context where
 import Control.Monad
 import qualified Lib.Vm.Runtime.Structure as RS
 
-newtype Stack a = Stack [a]
+newtype Stack a = Stack [a] deriving (Show, Eq)
 
 push :: a -> Stack a -> Stack a
 push x (Stack xs) = Stack (x : xs)
@@ -16,6 +16,7 @@ data InterpretState = InterpretState
   { stack :: Stack RS.StackEntry,
     frame :: Maybe RS.Frame -- TODO: Does a frame always have to exist?
   }
+  deriving (Show, Eq)
 
 type InterpretError = String
 
@@ -90,5 +91,5 @@ refFromStack =
     _ -> trapError "Item on stack not a ref"
 
 pushBool :: Bool -> InterpretContext ()
-pushBool True = pushStack $ RS.StackValue $ RS.Number $ RS.I32 1
-pushBool False = pushStack $ RS.StackValue $ RS.Number $ RS.I32 0
+pushBool True = pushStack $ RS.StackValue $ RS.Number $ RS.IntValue $ RS.I32 1
+pushBool False = pushStack $ RS.StackValue $ RS.Number $ RS.IntValue $ RS.I32 0

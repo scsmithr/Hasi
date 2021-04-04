@@ -8,34 +8,43 @@ import qualified Lib.Vm.Structure.Types as S
 class ValueTypeEq a where
   typeEq :: a -> a -> Bool
 
-data Value = Number NumberValue | Ref RefValue
+data Value = Number NumberValue | Ref RefValue deriving (Show, Eq)
 
 instance ValueTypeEq Value where
   typeEq (Number v1) (Number v2) = typeEq v1 v2
   typeEq (Ref v1) (Ref v2) = typeEq v1 v2
   typeEq _ _ = False
 
-data NumberValue
+data NumberValue = FloatValue FloatValue | IntValue IntValue deriving (Show, Eq)
+
+data IntValue
   = U32 Word32
   | U64 Word64
   | I32 Int32
   | I64 Int64
   deriving (Show, Eq)
 
+data FloatValue
+  = F32 Double
+  | F64 Double
+  deriving (Show, Eq)
+
 instance ValueTypeEq NumberValue where
-  typeEq (U32 _) (U32 _) = True
-  typeEq (U64 _) (U64 _) = True
-  typeEq (I32 _) (I32 _) = True
-  typeEq (I64 _) (I64 _) = True
+  typeEq (IntValue (U32 _)) (IntValue (U32 _)) = True
+  typeEq (IntValue (U64 _)) (IntValue (U64 _)) = True
+  typeEq (IntValue (I32 _)) (IntValue (I32 _)) = True
+  typeEq (IntValue (I64 _)) (IntValue (I64 _)) = True
+  typeEq (FloatValue (F32 _)) (FloatValue (F32 _)) = True
+  typeEq (FloatValue (F64 _)) (FloatValue (F64 _)) = True
   typeEq _ _ = False
 
-newtype Addr = Addr Word64 deriving (Eq)
+newtype Addr = Addr Word64 deriving (Eq, Show)
 
 data RefValue
   = RefNull
   | RefFunc Addr
   | RefExtern Addr
-  deriving (Eq)
+  deriving (Eq, Show)
 
 instance ValueTypeEq RefValue where
   typeEq RefNull RefNull = True
@@ -44,7 +53,7 @@ instance ValueTypeEq RefValue where
   typeEq _ _ = False
 
 defaultValue :: Value -> Value
-defaultValue (Number _) = Number $ U64 0
+defaultValue (Number _) = Number $ IntValue $ U64 0
 defaultValue (Ref _) = Ref RefNull
 
 data ModuleInst = ModuleInst
@@ -57,14 +66,15 @@ data ModuleInst = ModuleInst
     mDataAddrs :: [Addr],
     mExports :: [ExportInst]
   }
+  deriving (Show, Eq)
 
-data ExtValue = ExtFunc Addr | ExtTable Addr | ExtMem Addr | ExtGlobal Addr
+data ExtValue = ExtFunc Addr | ExtTable Addr | ExtMem Addr | ExtGlobal Addr deriving (Show, Eq)
 
-data ExportInst = ExportInst {eName :: S.Name, eValue :: ExtValue}
+data ExportInst = ExportInst {eName :: S.Name, eValue :: ExtValue} deriving (Show, Eq)
 
-data FuncInst = FuncInst {fInstType :: S.FuncType, fModule :: ModuleInst}
+data FuncInst = FuncInst {fInstType :: S.FuncType, fModule :: ModuleInst} deriving (Show, Eq)
 
-data IntUnop = IntUnopClz | IntUnopCtz | IntUnopPopcount
+data IntUnop = IntUnopClz | IntUnopCtz | IntUnopPopcount deriving (Show, Eq)
 
 data FloatUnop
   = FloatUnopAbs
@@ -74,8 +84,9 @@ data FloatUnop
   | FloatUnopFloor
   | FloatUnopTrunc
   | FloatUnopNearest
+  deriving (Show, Eq)
 
-data UnaryOp = IntUnaryOp IntUnop | FloatUnaryOp FloatUnop
+data UnaryOp = IntUnaryOp IntUnop | FloatUnaryOp FloatUnop deriving (Show, Eq)
 
 data IntBinop
   = IntBinopAdd
@@ -93,6 +104,7 @@ data IntBinop
   | IntBinopShrS
   | IntBinopRotl
   | IntBinopRotr
+  deriving (Show, Eq)
 
 data FloatBinop
   = FloatBinopAdd
@@ -102,8 +114,9 @@ data FloatBinop
   | FloatBinopMin
   | FloatBinopMax
   | FloatBinopCopysign
+  deriving (Show, Eq)
 
-data BinaryOp = IntBinaryOp IntBinop | FloatBinaryOp FloatBinop
+data BinaryOp = IntBinaryOp IntBinop | FloatBinaryOp FloatBinop deriving (Show, Eq)
 
 data IntRelop
   = IntRelopEq
@@ -116,6 +129,7 @@ data IntRelop
   | IntRelopLeS
   | IntRelopGeU
   | IntRelopGeS
+  deriving (Show, Eq)
 
 data FloatRelop
   = FloatRelopEq
@@ -124,8 +138,9 @@ data FloatRelop
   | FloatRelopGt
   | FloatRelopLe
   | FloatRelopGe
+  deriving (Show, Eq)
 
-data RelOp = IntRelop IntRelop | FloatRelop FloatRelop
+data RelOp = IntRelop IntRelop | FloatRelop FloatRelop deriving (Show, Eq)
 
 data Instruction
   = InsTConst NumberValue
@@ -137,23 +152,28 @@ data Instruction
   | InsRefIsNull
   | InsDrop
   | InsSelect
+  deriving (Show, Eq)
 
 data Label = Label
   { labelArity :: Int,
     labelTarget :: [Instruction]
   }
+  deriving (Show, Eq)
 
 data Frame = Frame
   { frameLocals :: [Value],
     frameModule :: ModuleInst
   }
+  deriving (Show, Eq)
 
 data Activation = Activation
   { activationFrameArity :: Int,
     activationFrame :: Frame
   }
+  deriving (Show, Eq)
 
 data StackEntry
   = StackValue Value
   | StackLabel Label
   | StackActivation Activation
+  deriving (Show, Eq)
