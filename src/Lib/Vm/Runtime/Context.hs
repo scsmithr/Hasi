@@ -1,3 +1,7 @@
+{-# LANGUAGE FlexibleContexts #-}
+{-# LANGUAGE FlexibleInstances #-}
+{-# LANGUAGE MultiParamTypeClasses #-}
+
 module Lib.Vm.Runtime.Context where
 
 import Control.Monad
@@ -38,6 +42,15 @@ instance Applicative InterpretContext where
   pure = return
   (<*>) = ap
 
+class (Monad m) => MonadTrap e m where
+  trapError :: e -> m a
+
+instance MonadTrap InterpretError InterpretContext where
+  trapError e = InterpretContext $ \_ -> Left e
+
+liftEither :: MonadTrap e m => Either e a -> m a
+liftEither = either trapError return
+
 pushStack :: RS.StackEntry -> InterpretContext ()
 pushStack entry = InterpretContext $ \s -> Right ((), modifyStack s)
   where
@@ -62,22 +75,56 @@ setCurrentFrameLocal idx val = InterpretContext $ \s -> case frame s of
     insertValue values = let (xs, ys) = splitAt idx values in xs ++ (val : (tail ys))
 
 getGlobalInstance :: RS.Addr -> InterpretContext RS.GlobalInst
-getGlobalInstance addr = InterpretContext $ \s -> Right (globalInst s, s)
-  where
-    globalInst s = RS.instAtAddr (store s) addr RS.sGlobals
+getGlobalInstance = getInstance RS.sGlobals
 
 setGlobalInstance :: RS.Addr -> RS.Value -> InterpretContext ()
 setGlobalInstance addr val = InterpretContext $ \s -> Right ((), s {store = modifyStore (store s)})
   where
     modifyStore s@RS.Store {RS.sGlobals = globs} = s {RS.sGlobals = insertValue globs}
     insertValue globs =
-      let (xs, ys) = splitAt (intAddr addr) globs
+      let (xs, ys) = splitAt (unwrapAddr addr) globs
        in xs ++ ((replaced globs) {RS.gValue = val} : tail ys)
-    replaced globs = globs !! intAddr addr
-    intAddr (RS.Addr w) = w
+    replaced globs = globs !! unwrapAddr addr
 
-trapError :: InterpretError -> InterpretContext a
-trapError e = InterpretContext $ \_ -> Left e
+getTableInstance :: RS.Addr -> InterpretContext RS.TableInst
+getTableInstance = getInstance RS.sTables
+
+-- | Set a table at the given address.
+setTable :: RS.Addr -> RS.TableInst -> InterpretContext ()
+setTable addr tab = InterpretContext $ \s -> Right ((), s {store = modifyStore (store s)})
+  where
+    modifyStore s@RS.Store {RS.sTables = tabs} = s {RS.sTables = replaceTable tabs}
+    replaceTable tabs = replaceValue (unwrapAddr addr) tab tabs
+
+getElemInstance :: RS.Addr -> InterpretContext RS.ElemInst
+getElemInstance = getInstance RS.sElems
+
+setElemInstance :: RS.Addr -> RS.ElemInst -> InterpretContext ()
+setElemInstance addr updated = InterpretContext $ \s -> Right ((), s {store = modifyStore (store s)})
+  where
+    modifyStore s@RS.Store {RS.sElems = elems} = s {RS.sElems = replaceElem elems}
+    replaceElem elems = replaceValue (unwrapAddr addr) updated elems
+
+replaceValue :: Int -> a -> [a] -> [a]
+replaceValue idx val list =
+  let (xs, ys) = splitAt idx list
+   in xs ++ (val : tail ys)
+
+unwrapAddr :: RS.Addr -> Int
+unwrapAddr (RS.Addr i) = i
+
+getInstance :: (RS.Store -> [a]) -> RS.Addr -> InterpretContext a
+getInstance proj addr = InterpretContext $ \s -> Right (inst s, s)
+  where
+    inst s = RS.instAtAddr (store s) addr proj
+
+-- | Get an address for some entity from the current frame using the given
+-- projection.
+-- TODO: Handle missing address.
+addrFromFrameModule :: (RS.ModuleInst -> RS.Addr) -> InterpretContext RS.Addr
+addrFromFrameModule proj = do
+  f <- currentFrame
+  return $ proj $ RS.frameModule f
 
 -- | Degree of number type equality.
 -- TODO: Needs value for if two numbers are floats (or ints).
@@ -91,12 +138,17 @@ numericTypeEquality n1 n2
   | RS.typeEq n1 n2 = EqualityExact
   | otherwise = EqualityNumber
 
-assertNumericTypes :: RS.NumberValue -> RS.NumberValue -> NumericTypeEquality -> InterpretContext ()
+assertNumericTypes ::
+  MonadTrap InterpretError m =>
+  RS.NumberValue ->
+  RS.NumberValue ->
+  NumericTypeEquality ->
+  m ()
 assertNumericTypes v1 v2 equality
   | numericTypeEquality v1 v2 >= equality = return ()
   | otherwise = trapError "Numeric type equality outside of bounds"
 
-assertValueTypesEq :: RS.ValueTypeEq a => a -> a -> InterpretContext ()
+assertValueTypesEq :: MonadTrap InterpretError m => RS.ValueTypeEq a => a -> a -> m ()
 assertValueTypesEq v1 v2
   | RS.typeEq v1 v2 = return ()
   | otherwise = trapError "Value types not equal"
@@ -118,7 +170,3 @@ refFromStack =
   popStack >>= \e -> case e of
     (RS.StackValue (RS.Ref v)) -> return v
     _ -> trapError "Item on stack not a ref"
-
-pushBool :: Bool -> InterpretContext ()
-pushBool True = pushStack $ RS.StackValue $ RS.Number $ RS.IntValue $ RS.I32 1
-pushBool False = pushStack $ RS.StackValue $ RS.Number $ RS.IntValue $ RS.I32 0
