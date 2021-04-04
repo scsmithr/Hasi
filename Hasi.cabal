@@ -24,11 +24,11 @@ source-repository head
 
 library
   exposed-modules:
-      Lib.Vm
-      Lib.Vm.Runtime.Context
-      Lib.Vm.Runtime.Interpret
-      Lib.Vm.Runtime.Structure
-      Lib.Vm.Structure.Types
+      Lib.Runtime
+      Lib.Runtime.Context
+      Lib.Runtime.Interpret
+      Lib.Runtime.Structure
+      Lib.Structure
   other-modules:
       Paths_Hasi
   hs-source-dirs:
@@ -59,7 +59,7 @@ test-suite Hasi2-test
   type: exitcode-stdio-1.0
   main-is: Spec.hs
   other-modules:
-      Lib.Vm.RuntimeSpec
+      Lib.RuntimeSpec
       Paths_Hasi
   hs-source-dirs:
       test

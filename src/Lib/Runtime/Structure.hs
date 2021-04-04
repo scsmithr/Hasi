@@ -1,10 +1,10 @@
 -- | Types and functions for the runtime structure of the vm.
-module Lib.Vm.Runtime.Structure where
+module Lib.Runtime.Structure where
 
 import qualified Data.ByteString as B
 import Data.Int
 import Data.Word
-import qualified Lib.Vm.Structure.Types as S
+import qualified Lib.Structure as S
 
 class ValueTypeEq a where
   typeEq :: a -> a -> Bool

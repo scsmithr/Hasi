@@ -1,4 +1,4 @@
-module Lib.Vm.Structure.Types where
+module Lib.Structure where
 
 import qualified Data.ByteString as B
 import Data.Int

@@ -1,12 +1,12 @@
 {-# LANGUAGE FlexibleContexts #-}
 
-module Lib.Vm.Runtime.Interpret (interpret) where
+module Lib.Runtime.Interpret (interpret) where
 
 import Control.Monad
 import Data.Int
 import Data.List
-import Lib.Vm.Runtime.Context
-import qualified Lib.Vm.Runtime.Structure as RS
+import Lib.Runtime.Context
+import qualified Lib.Runtime.Structure as RS
 
 i32sentinel :: RS.NumberValue
 i32sentinel = RS.IntValue $ RS.I32 0

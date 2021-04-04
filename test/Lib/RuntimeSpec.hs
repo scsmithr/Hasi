@@ -1,8 +1,8 @@
-module Lib.Vm.RuntimeSpec where
+module Lib.RuntimeSpec where
 
-import Lib.Vm.Runtime.Context
-import Lib.Vm.Runtime.Interpret
-import Lib.Vm.Runtime.Structure as RS
+import Lib.Runtime.Context
+import Lib.Runtime.Interpret
+import Lib.Runtime.Structure as RS
 import Test.Hspec
 
 spec :: Spec

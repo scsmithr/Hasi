@@ -2,10 +2,10 @@
 {-# LANGUAGE FlexibleInstances #-}
 {-# LANGUAGE MultiParamTypeClasses #-}
 
-module Lib.Vm.Runtime.Context where
+module Lib.Runtime.Context where
 
 import Control.Monad
-import qualified Lib.Vm.Runtime.Structure as RS
+import qualified Lib.Runtime.Structure as RS
 
 newtype Stack a = Stack [a] deriving (Show, Eq)
 
