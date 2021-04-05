@@ -3,8 +3,11 @@
 module Lib.Runtime.Interpret (interpret) where
 
 import Control.Monad
+import qualified Data.ByteString.Lazy as BS
 import Data.Int
 import Data.List
+import Data.Word
+import Lib.Runtime.Byte
 import Lib.Runtime.Context
 import qualified Lib.Runtime.Structure as RS
 
@@ -31,6 +34,7 @@ interpret (RS.InsTableFill idx) = interpretTableFill idx
 interpret (RS.InsTableCopy idxX idxY) = interpretTableCopy idxX idxY
 interpret (RS.InsTableInit idxX idxY) = interpretTableInit idxX idxY
 interpret (RS.InsElemDrop idx) = interpretElemDrop idx
+interpret (RS.InsTMemLoad insType memarg storeSize storeSign) = interpretMemLoad insType memarg storeSize storeSign
 interpret _ = error "unimplemented"
 
 interpretUnaryOp :: RS.UnaryOp -> InterpretContext ()
@@ -231,6 +235,37 @@ interpretElemDrop idx = do
   let updated = e {RS.eElem = []}
   setElemInstance addr updated
 
+interpretMemLoad ::
+  RS.InsType ->
+  RS.MemArg ->
+  Maybe RS.IntStoreSize ->
+  Maybe RS.IntSign ->
+  InterpretContext ()
+interpretMemLoad insType memarg storeSize storeSign = do
+  (_, mem) <- memAddrInstPair
+  i <- popUnwrapI32
+  let ea = fromIntegral (i + fromIntegral (RS.maOffset memarg)) :: Int64
+  let n = case storeSize of
+        (Just sz) -> RS.storeSize sz
+        _ -> RS.bitWidth insType
+  let n' = fromIntegral n :: Int64
+  let memLength = BS.length (RS.mBytes mem)
+  unless
+    (fromIntegral (ea + n' `div` 8) > memLength)
+    (trapError "Requested larger than mem size")
+
+  case (storeSize, storeSign) of
+    (Just _, Just sign) -> return () -- TODO
+    _ ->
+      let bs = RS.mBytes mem
+          readPush RS.InsTypeI32 = pushTranslatable (readFrom bs ea :: Int32)
+          readPush RS.InsTypeI64 = pushTranslatable (readFrom bs ea :: Int64)
+          readPush RS.InsTypeU32 = pushTranslatable (readFrom bs ea :: Word32)
+          readPush RS.InsTypeU64 = pushTranslatable (readFrom bs ea :: Word64)
+          readPush RS.InsTypeF32 = pushTranslatable (readFrom bs ea :: Float)
+          readPush RS.InsTypeF64 = pushTranslatable (readFrom bs ea :: Double)
+       in readPush insType
+
 -- TODO: Implement me
 evalBinaryOp ::
   RS.BinaryOp ->
@@ -278,6 +313,11 @@ pushBool False = pushStack $ RS.StackValue $ RS.Number $ RS.IntValue $ RS.I32 0
 pushI32 :: Integral a => a -> InterpretContext ()
 pushI32 = pushStack . RS.StackValue . RS.Number . RS.IntValue . RS.I32 . fromIntegral
 
+-- | Push a value that's able to be translated into an intermediate
+-- representation onto the stack.
+pushTranslatable :: RS.Translatable a => a -> InterpretContext ()
+pushTranslatable = pushStack . RS.translateTo
+
 popUnwrapI32 :: InterpretContext Int32
 popUnwrapI32 = numberFromStack >>= liftEither . unwrapI32
 
@@ -287,14 +327,24 @@ pushRef = pushStack . RS.StackValue . RS.Ref
 -- | Get the table address and instance pair from the current frame's module at
 -- the given index.
 tableAddrInstPair :: Int -> InterpretContext (RS.Addr, RS.TableInst)
-tableAddrInstPair idx = do
-  addr <- addrFromFrameModule ((!! idx) . RS.mTableAddrs)
-  tab <- getTableInstance addr
-  return (addr, tab)
+tableAddrInstPair idx = addrInstPair RS.mTableAddrs idx RS.sTables
 
 -- | Get the element address and instance from the current frame's module.
 elemAddrInstPair :: Int -> InterpretContext (RS.Addr, RS.ElemInst)
-elemAddrInstPair idx = do
-  addr <- addrFromFrameModule ((!! idx) . RS.mElemAddrs)
-  e <- getElemInstance addr
-  return (addr, e)
+elemAddrInstPair idx = addrInstPair RS.mElemAddrs idx RS.sElems
+
+-- | Get the mem addr and instance from the current frame's module.
+memAddrInstPair :: InterpretContext (RS.Addr, RS.MemInst)
+memAddrInstPair = addrInstPair RS.mMemAddrs 0 RS.sMems
+
+-- | Get the address and instance of some entity using the providing module and
+-- store projections.
+addrInstPair ::
+  (RS.ModuleInst -> [RS.Addr]) ->
+  Int ->
+  (RS.Store -> [a]) ->
+  InterpretContext (RS.Addr, a)
+addrInstPair modProj addrIdx storeProj = do
+  addr <- addrFromFrameModule ((!! addrIdx) . modProj)
+  inst <- getInstance storeProj addr
+  return (addr, inst)

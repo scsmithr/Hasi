@@ -1,7 +1,7 @@
 -- | Types and functions for the runtime structure of the vm.
 module Lib.Runtime.Structure where
 
-import qualified Data.ByteString as B
+import qualified Data.ByteString.Lazy as B
 import Data.Int
 import Data.Word
 import qualified Lib.Structure as S
@@ -16,6 +16,11 @@ instance ValueTypeEq Value where
   typeEq (Ref v1) (Ref v2) = typeEq v1 v2
   typeEq _ _ = False
 
+-- | Types that are able to be represented in some intermediate form on the
+-- stack.
+class Translatable a where
+  translateTo :: a -> StackEntry
+
 data NumberValue = FloatValue FloatValue | IntValue IntValue deriving (Show, Eq)
 
 data IntValue
@@ -26,7 +31,7 @@ data IntValue
   deriving (Show, Eq)
 
 data FloatValue
-  = F32 Double
+  = F32 Float
   | F64 Double
   deriving (Show, Eq)
 
@@ -38,6 +43,18 @@ instance ValueTypeEq NumberValue where
   typeEq (FloatValue (F32 _)) (FloatValue (F32 _)) = True
   typeEq (FloatValue (F64 _)) (FloatValue (F64 _)) = True
   typeEq _ _ = False
+
+instance Translatable Word32 where translateTo = StackValue . Number . IntValue . U32
+
+instance Translatable Word64 where translateTo = StackValue . Number . IntValue . U64
+
+instance Translatable Int32 where translateTo = StackValue . Number . IntValue . I32
+
+instance Translatable Int64 where translateTo = StackValue . Number . IntValue . I64
+
+instance Translatable Float where translateTo = StackValue . Number . FloatValue . F32
+
+instance Translatable Double where translateTo = StackValue . Number . FloatValue . F64
 
 newtype Addr = Addr Int deriving (Eq, Show)
 
@@ -169,6 +186,34 @@ data FloatRelop
 
 data RelOp = IntRelop IntRelop | FloatRelop FloatRelop deriving (Show, Eq)
 
+data MemArg = MemArg {maOffset :: Word32, maAlign :: Word32} deriving (Show, Eq)
+
+data IntStoreSize = IntStoreSize8 | IntStoreSize16 | IntStoreSize32 deriving (Show, Eq)
+
+storeSize :: IntStoreSize -> Int
+storeSize IntStoreSize8 = 8
+storeSize IntStoreSize16 = 16
+storeSize IntStoreSize32 = 32
+
+data IntSign = IntSignU | IntSignS deriving (Show, Eq)
+
+data InsType
+  = InsTypeI32
+  | InsTypeI64
+  | InsTypeU32
+  | InsTypeU64
+  | InsTypeF32
+  | InsTypeF64
+  deriving (Show, Eq)
+
+bitWidth :: InsType -> Int
+bitWidth InsTypeI32 = 32
+bitWidth InsTypeI64 = 64
+bitWidth InsTypeU32 = 32
+bitWidth InsTypeU64 = 64
+bitWidth InsTypeF32 = 32
+bitWidth InsTypeF64 = 64
+
 data Instruction
   = InsTConst NumberValue
   | InsTUnop UnaryOp
@@ -192,6 +237,7 @@ data Instruction
   | InsTableCopy Int Int
   | InsTableInit Int Int
   | InsElemDrop Int
+  | InsTMemLoad InsType MemArg (Maybe IntStoreSize) (Maybe IntSign)
   deriving (Show, Eq)
 
 data Label = Label

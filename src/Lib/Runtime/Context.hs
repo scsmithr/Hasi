@@ -86,9 +86,6 @@ setGlobalInstance addr val = InterpretContext $ \s -> Right ((), s {store = modi
        in xs ++ ((replaced globs) {RS.gValue = val} : tail ys)
     replaced globs = globs !! unwrapAddr addr
 
-getTableInstance :: RS.Addr -> InterpretContext RS.TableInst
-getTableInstance = getInstance RS.sTables
-
 -- | Set a table at the given address.
 setTable :: RS.Addr -> RS.TableInst -> InterpretContext ()
 setTable addr tab = InterpretContext $ \s -> Right ((), s {store = modifyStore (store s)})
@@ -96,14 +93,17 @@ setTable addr tab = InterpretContext $ \s -> Right ((), s {store = modifyStore (
     modifyStore s@RS.Store {RS.sTables = tabs} = s {RS.sTables = replaceTable tabs}
     replaceTable tabs = replaceValue (unwrapAddr addr) tab tabs
 
-getElemInstance :: RS.Addr -> InterpretContext RS.ElemInst
-getElemInstance = getInstance RS.sElems
-
 setElemInstance :: RS.Addr -> RS.ElemInst -> InterpretContext ()
 setElemInstance addr updated = InterpretContext $ \s -> Right ((), s {store = modifyStore (store s)})
   where
     modifyStore s@RS.Store {RS.sElems = elems} = s {RS.sElems = replaceElem elems}
     replaceElem elems = replaceValue (unwrapAddr addr) updated elems
+
+setMemInstance :: RS.Addr -> RS.MemInst -> InterpretContext ()
+setMemInstance addr updated = InterpretContext $ \s -> Right ((), s {store = modifyStore (store s)})
+  where
+    modifyStore s@RS.Store {RS.sMems = mems} = s {RS.sMems = replaceMem mems}
+    replaceMem mems = replaceValue (unwrapAddr addr) updated mems
 
 replaceValue :: Int -> a -> [a] -> [a]
 replaceValue idx val list =
