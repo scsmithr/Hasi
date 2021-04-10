@@ -225,6 +225,9 @@ data Instruction
   | InsMemSize
   | InsMemGrow
   | InsMemFill
+  | InsMemCopy
+  | InsMemInit Int
+  | InsDataDrop Int
   deriving (Show, Eq)
 
 data Label = Label

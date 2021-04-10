@@ -108,6 +108,12 @@ setMemInstance addr updated = InterpretContext $ \s -> Right ((), s {store = mod
     modifyStore s@RS.Store {RS.sMems = mems} = s {RS.sMems = replaceMem mems}
     replaceMem mems = replaceValue (unwrapAddr addr) updated mems
 
+setDataInstance :: RS.Addr -> RS.DataInst -> InterpretContext ()
+setDataInstance addr updated = InterpretContext $ \s -> Right ((), s {store = modifyStore (store s)})
+  where
+    modifyStore s@RS.Store {RS.sDatas = dats} = s {RS.sDatas = replaceData dats}
+    replaceData dats = replaceValue (unwrapAddr addr) updated dats
+
 replaceValue :: Int -> a -> [a] -> [a]
 replaceValue idx val list =
   let (xs, ys) = splitAt idx list

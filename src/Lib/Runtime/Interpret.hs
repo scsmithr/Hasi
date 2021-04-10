@@ -44,6 +44,9 @@ interpret (RS.InsTMemStore numType memarg storeSize storeSign) = interpretMemSto
 interpret RS.InsMemSize = interpretMemSize
 interpret RS.InsMemGrow = interpretMemGrow
 interpret RS.InsMemFill = interpretMemFill
+interpret RS.InsMemCopy = interpretMemCopy
+interpret (RS.InsMemInit idx) = interpretMemInit idx
+interpret (RS.InsDataDrop idx) = interpretDataDrop idx
 interpret _ = error "unimplemented"
 
 interpretUnaryOp :: RS.UnaryOp -> InterpretContext ()
@@ -337,12 +340,104 @@ interpretMemFill = do
         | otherwise =
           pushI32 d
             >> pushI32 val
-            >> interpret (RS.InsTMemStore RS.NumberTypeI32 RS.MemArg {RS.maOffset = 0, RS.maAlign = 0} Nothing Nothing)
+            >> interpret (RS.InsTMemStore RS.NumberTypeI32 RS.MemArg {RS.maOffset = 0, RS.maAlign = 0} Nothing Nothing) -- TODO: Add store size
             >> pushI32 (d + 1)
             >> pushI32 val
             >> pushI32 (n -1)
             >> interpret RS.InsMemFill
   run
+
+interpretMemCopy :: InterpretContext ()
+interpretMemCopy = do
+  (_, mem) <- memAddrInstPair
+  n <- popUnwrapI32
+  s <- popUnwrapI32
+  d <- popUnwrapI32
+  let l = BS.length (RS.mBytes mem)
+  let postRun :: InterpretContext ()
+      postRun = pushI32 (n -1) >> interpret RS.InsMemCopy
+
+      run :: InterpretContext ()
+      run
+        | fromIntegral (s + n) > l || fromIntegral (d + n) > l = trapError "Index out of bounds (mem copy)"
+        | n == 0 = return ()
+        | d <= s =
+          pushI32 d
+            >> pushI32 s
+            >> interpret
+              ( RS.InsTMemLoad
+                  RS.NumberTypeI32
+                  RS.MemArg {RS.maOffset = 0, RS.maAlign = 0}
+                  Nothing
+                  Nothing -- TODO: Add sign and store size
+              )
+            >> interpret
+              ( RS.InsTMemStore
+                  RS.NumberTypeI32
+                  RS.MemArg {RS.maOffset = 0, RS.maAlign = 0}
+                  Nothing
+                  Nothing -- TODO: Add sign and store size
+              )
+            >> pushI32 (d + 1)
+            >> pushI32 (s + 1)
+            >> postRun
+        | otherwise =
+          pushI32 (d + n -1)
+            >> pushI32 (s + n -1)
+            >> interpret
+              ( RS.InsTMemLoad
+                  RS.NumberTypeI32
+                  RS.MemArg {RS.maOffset = 0, RS.maAlign = 0}
+                  Nothing
+                  Nothing -- TODO: Add sign and store size
+              )
+            >> interpret
+              ( RS.InsTMemStore
+                  RS.NumberTypeI32
+                  RS.MemArg {RS.maOffset = 0, RS.maAlign = 0}
+                  Nothing
+                  Nothing -- TODO: Add sign and store size
+              )
+            >> pushI32 d
+            >> pushI32 s
+            >> postRun
+  run
+
+interpretMemInit :: Int -> InterpretContext ()
+interpretMemInit idx = do
+  (_, mem) <- memAddrInstPair
+  (_, dat) <- dataAddrInstPair idx
+  n <- popUnwrapI32
+  s <- popUnwrapI32
+  d <- popUnwrapI32
+  let ml = BS.length (RS.mBytes mem)
+  let dl = BS.length (RS.dData dat)
+  let run :: InterpretContext ()
+      run
+        | fromIntegral (s + n) > dl || fromIntegral (d + n) > ml = trapError "Index out of bounds (mem init)"
+        | n == 0 = return ()
+        | otherwise =
+          let b = BS.index (RS.dData dat) (fromIntegral s)
+           in pushI32 d
+                >> pushI32 b
+                >> interpret
+                  ( RS.InsTMemStore
+                      RS.NumberTypeI32
+                      RS.MemArg {RS.maOffset = 0, RS.maAlign = 0}
+                      Nothing
+                      Nothing -- TODO: Add sign and store size
+                  )
+                >> pushI32 (d + 1)
+                >> pushI32 (s + 1)
+                >> pushI32 (n -1)
+                >> interpret (RS.InsMemInit idx)
+  run
+
+interpretDataDrop :: Int -> InterpretContext ()
+interpretDataDrop idx = do
+  (addr, dat) <- dataAddrInstPair idx
+  let updated = dat {RS.dData = BS.empty}
+  setDataInstance addr updated
 
 -- TODO: Implement me
 evalBinaryOp ::
@@ -416,6 +511,9 @@ elemAddrInstPair idx = addrInstPair RS.mElemAddrs idx RS.sElems
 -- | Get the mem addr and instance from the current frame's module.
 memAddrInstPair :: InterpretContext (RS.Addr, RS.MemInst)
 memAddrInstPair = addrInstPair RS.mMemAddrs 0 RS.sMems
+
+dataAddrInstPair :: Int -> InterpretContext (RS.Addr, RS.DataInst)
+dataAddrInstPair idx = addrInstPair RS.mDataAddrs idx RS.sDatas
 
 -- | Get the address and instance of some entity using the providing module and
 -- store projections.
