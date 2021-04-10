@@ -51,6 +51,9 @@ instance MonadTrap InterpretError InterpretContext where
 liftEither :: MonadTrap e m => Either e a -> m a
 liftEither = either trapError return
 
+liftMaybe :: MonadTrap e m => e -> Maybe a -> m a
+liftMaybe def = maybe (trapError def) return
+
 pushStack :: RS.StackEntry -> InterpretContext ()
 pushStack entry = InterpretContext $ \s -> Right ((), modifyStack s)
   where

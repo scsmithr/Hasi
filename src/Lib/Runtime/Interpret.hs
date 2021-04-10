@@ -9,7 +9,7 @@ import Data.List
 import Data.Word
 import Lib.Runtime.Byte
 import Lib.Runtime.Context
-import Lib.Runtime.Injective (Injective (..), to)
+import Lib.Runtime.Injective (Injective (..), MaybeInjective (..), to, toMaybe)
 import qualified Lib.Runtime.Structure as RS
 
 interpret :: RS.Instruction -> InterpretContext ()
@@ -35,7 +35,8 @@ interpret (RS.InsTableFill idx) = interpretTableFill idx
 interpret (RS.InsTableCopy idxX idxY) = interpretTableCopy idxX idxY
 interpret (RS.InsTableInit idxX idxY) = interpretTableInit idxX idxY
 interpret (RS.InsElemDrop idx) = interpretElemDrop idx
-interpret (RS.InsTMemLoad insType memarg storeSize storeSign) = interpretMemLoad insType memarg storeSize storeSign
+interpret (RS.InsTMemLoad numType memarg storeSize storeSign) = interpretMemLoad numType memarg storeSize storeSign
+interpret (RS.InsTMemStore numType memarg storeSize storeSign) = interpretMemStore numType memarg storeSize storeSign
 interpret _ = error "unimplemented"
 
 interpretUnaryOp :: RS.UnaryOp -> InterpretContext ()
@@ -237,18 +238,18 @@ interpretElemDrop idx = do
   setElemInstance addr updated
 
 interpretMemLoad ::
-  RS.InsType ->
+  RS.NumberType ->
   RS.MemArg ->
   Maybe RS.IntStoreSize ->
   Maybe RS.IntSign ->
   InterpretContext ()
-interpretMemLoad insType memarg storeSize storeSign = do
+interpretMemLoad numType memarg storeSize storeSign = do
   (_, mem) <- memAddrInstPair
   i <- popUnwrapI32
   let ea = fromIntegral (i + fromIntegral (RS.maOffset memarg)) :: Int64
   let n = case storeSize of
         (Just sz) -> RS.storeSize sz
-        _ -> RS.bitWidth insType
+        _ -> RS.bitWidth numType
   let n' = fromIntegral n :: Int64
   let memLength = BS.length (RS.mBytes mem)
   unless
@@ -259,13 +260,45 @@ interpretMemLoad insType memarg storeSize storeSign = do
     (Just _, Just sign) -> return () -- TODO
     _ ->
       let bs = RS.mBytes mem
-          readPush RS.InsTypeI32 = pushStackInjective (readFrom bs ea :: Int32)
-          readPush RS.InsTypeI64 = pushStackInjective (readFrom bs ea :: Int64)
-          readPush RS.InsTypeU32 = pushStackInjective (readFrom bs ea :: Word32)
-          readPush RS.InsTypeU64 = pushStackInjective (readFrom bs ea :: Word64)
-          readPush RS.InsTypeF32 = pushStackInjective (readFrom bs ea :: Float)
-          readPush RS.InsTypeF64 = pushStackInjective (readFrom bs ea :: Double)
-       in readPush insType
+          readPush RS.NumberTypeI32 = pushStackInjective (readFrom bs ea :: Int32)
+          readPush RS.NumberTypeI64 = pushStackInjective (readFrom bs ea :: Int64)
+          readPush RS.NumberTypeU32 = pushStackInjective (readFrom bs ea :: Word32)
+          readPush RS.NumberTypeU64 = pushStackInjective (readFrom bs ea :: Word64)
+          readPush RS.NumberTypeF32 = pushStackInjective (readFrom bs ea :: Float)
+          readPush RS.NumberTypeF64 = pushStackInjective (readFrom bs ea :: Double)
+       in readPush numType
+
+interpretMemStore ::
+  RS.NumberType ->
+  RS.MemArg ->
+  Maybe RS.IntStoreSize ->
+  Maybe RS.IntSign ->
+  InterpretContext ()
+interpretMemStore numType memarg storeSize _storeSign = do
+  (_, mem) <- memAddrInstPair
+  val <- numberFromStack
+  i <- popUnwrapI32
+  let ea = fromIntegral (i + fromIntegral (RS.maOffset memarg)) :: Int64
+  let n = case storeSize of
+        (Just sz) -> RS.storeSize sz
+        _ -> RS.bitWidth numType
+  let n' = fromIntegral n :: Int64
+  let memLength = BS.length (RS.mBytes mem)
+  unless
+    (fromIntegral (ea + n' `div` 8) > memLength)
+    (trapError "Requested larger than mem size")
+
+  let overwriteMem v = setMemInstance (RS.Addr 0) (mem {RS.mBytes = overwriteAt (RS.mBytes mem) v ea})
+
+  case storeSize of
+    (Just _) -> return () -- TODO
+    _ -> case numType of
+      RS.NumberTypeI32 -> (unwrap val :: InterpretContext Int32) >>= overwriteMem
+      RS.NumberTypeI64 -> (unwrap val :: InterpretContext Int64) >>= overwriteMem
+      RS.NumberTypeU32 -> (unwrap val :: InterpretContext Word32) >>= overwriteMem
+      RS.NumberTypeU64 -> (unwrap val :: InterpretContext Word64) >>= overwriteMem
+      RS.NumberTypeF32 -> (unwrap val :: InterpretContext Float) >>= overwriteMem
+      RS.NumberTypeF64 -> (unwrap val :: InterpretContext Double) >>= overwriteMem
 
 -- TODO: Implement me
 evalBinaryOp ::
@@ -303,16 +336,12 @@ evalRelOp ::
   Either InterpretError RS.NumberValue
 evalRelOp _op _v1 _v2 = Right $ RS.IntValue $ RS.I32 0
 
-unwrapI32 :: RS.NumberValue -> Either InterpretError Int32
-unwrapI32 (RS.IntValue (RS.I32 v)) = Right v
-unwrapI32 _ = Left "Number value not an i32"
-
 pushBool :: Bool -> InterpretContext ()
-pushBool True = pushStack $ RS.StackValue $ RS.Number $ RS.IntValue $ RS.I32 1
-pushBool False = pushStack $ RS.StackValue $ RS.Number $ RS.IntValue $ RS.I32 0
+pushBool True = pushStack $ to (1 :: Int32)
+pushBool False = pushStack $ to (0 :: Int32)
 
 pushI32 :: Integral a => a -> InterpretContext ()
-pushI32 = pushStack . RS.StackValue . RS.Number . RS.IntValue . RS.I32 . fromIntegral
+pushI32 v = pushStack $ to (fromIntegral v :: Int32)
 
 -- | Push a value that's able to be translated into an intermediate
 -- representation onto the stack.
@@ -320,7 +349,13 @@ pushStackInjective :: Injective a RS.StackEntry => a -> InterpretContext ()
 pushStackInjective = pushStack . to
 
 popUnwrapI32 :: InterpretContext Int32
-popUnwrapI32 = numberFromStack >>= liftEither . unwrapI32
+popUnwrapI32 = popUnwrap :: InterpretContext Int32
+
+unwrap :: MonadTrap InterpretError m => MaybeInjective RS.NumberValue b => RS.NumberValue -> m b
+unwrap = liftMaybe "Value type mismatch" . toMaybe
+
+popUnwrap :: MaybeInjective RS.NumberValue b => InterpretContext b
+popUnwrap = numberFromStack >>= unwrap
 
 pushRef :: RS.RefValue -> InterpretContext ()
 pushRef = pushStack . RS.StackValue . RS.Ref

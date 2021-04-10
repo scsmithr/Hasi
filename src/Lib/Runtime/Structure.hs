@@ -180,22 +180,22 @@ storeSize IntStoreSize32 = 32
 
 data IntSign = IntSignU | IntSignS deriving (Show, Eq)
 
-data InsType
-  = InsTypeI32
-  | InsTypeI64
-  | InsTypeU32
-  | InsTypeU64
-  | InsTypeF32
-  | InsTypeF64
+data NumberType
+  = NumberTypeI32
+  | NumberTypeI64
+  | NumberTypeU32
+  | NumberTypeU64
+  | NumberTypeF32
+  | NumberTypeF64
   deriving (Show, Eq)
 
-bitWidth :: InsType -> Int
-bitWidth InsTypeI32 = 32
-bitWidth InsTypeI64 = 64
-bitWidth InsTypeU32 = 32
-bitWidth InsTypeU64 = 64
-bitWidth InsTypeF32 = 32
-bitWidth InsTypeF64 = 64
+bitWidth :: NumberType -> Int
+bitWidth NumberTypeI32 = 32
+bitWidth NumberTypeI64 = 64
+bitWidth NumberTypeU32 = 32
+bitWidth NumberTypeU64 = 64
+bitWidth NumberTypeF32 = 32
+bitWidth NumberTypeF64 = 64
 
 data Instruction
   = InsTConst NumberValue
@@ -220,7 +220,8 @@ data Instruction
   | InsTableCopy Int Int
   | InsTableInit Int Int
   | InsElemDrop Int
-  | InsTMemLoad InsType MemArg (Maybe IntStoreSize) (Maybe IntSign)
+  | InsTMemLoad NumberType MemArg (Maybe IntStoreSize) (Maybe IntSign)
+  | InsTMemStore NumberType MemArg (Maybe IntStoreSize) (Maybe IntSign)
   deriving (Show, Eq)
 
 data Label = Label
