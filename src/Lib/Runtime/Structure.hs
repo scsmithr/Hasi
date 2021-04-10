@@ -1,7 +1,7 @@
 -- | Types and functions for the runtime structure of the vm.
 module Lib.Runtime.Structure where
 
-import qualified Data.ByteString as B
+import qualified Data.ByteString.Lazy as B
 import Data.Int
 import Data.Word
 import qualified Lib.Structure as S
@@ -26,7 +26,7 @@ data IntValue
   deriving (Show, Eq)
 
 data FloatValue
-  = F32 Double
+  = F32 Float
   | F64 Double
   deriving (Show, Eq)
 
@@ -169,6 +169,34 @@ data FloatRelop
 
 data RelOp = IntRelop IntRelop | FloatRelop FloatRelop deriving (Show, Eq)
 
+data MemArg = MemArg {maOffset :: Word32, maAlign :: Word32} deriving (Show, Eq)
+
+data IntStoreSize = IntStoreSize8 | IntStoreSize16 | IntStoreSize32 deriving (Show, Eq)
+
+storeSize :: IntStoreSize -> Int
+storeSize IntStoreSize8 = 8
+storeSize IntStoreSize16 = 16
+storeSize IntStoreSize32 = 32
+
+data IntSign = IntSignU | IntSignS deriving (Show, Eq)
+
+data NumberType
+  = NumberTypeI32
+  | NumberTypeI64
+  | NumberTypeU32
+  | NumberTypeU64
+  | NumberTypeF32
+  | NumberTypeF64
+  deriving (Show, Eq)
+
+bitWidth :: NumberType -> Int
+bitWidth NumberTypeI32 = 32
+bitWidth NumberTypeI64 = 64
+bitWidth NumberTypeU32 = 32
+bitWidth NumberTypeU64 = 64
+bitWidth NumberTypeF32 = 32
+bitWidth NumberTypeF64 = 64
+
 data Instruction
   = InsTConst NumberValue
   | InsTUnop UnaryOp
@@ -192,6 +220,14 @@ data Instruction
   | InsTableCopy Int Int
   | InsTableInit Int Int
   | InsElemDrop Int
+  | InsTMemLoad NumberType MemArg (Maybe IntStoreSize) (Maybe IntSign)
+  | InsTMemStore NumberType MemArg (Maybe IntStoreSize) (Maybe IntSign)
+  | InsMemSize
+  | InsMemGrow
+  | InsMemFill
+  | InsMemCopy
+  | InsMemInit Int
+  | InsDataDrop Int
   deriving (Show, Eq)
 
 data Label = Label

@@ -3,10 +3,18 @@
 module Lib.Runtime.Interpret (interpret) where
 
 import Control.Monad
+import qualified Data.ByteString.Lazy as BS
 import Data.Int
 import Data.List
+import Data.Word
+import Lib.Runtime.Byte
 import Lib.Runtime.Context
+import Lib.Runtime.Injective (Injective (..), MaybeInjective (..), to, toMaybe)
 import qualified Lib.Runtime.Structure as RS
+
+-- | Memory page size as defined in the spec.
+memPageSize :: Int
+memPageSize = 65536
 
 interpret :: RS.Instruction -> InterpretContext ()
 interpret (RS.InsTConst val) = pushStack $ RS.StackValue $ RS.Number val
@@ -31,6 +39,14 @@ interpret (RS.InsTableFill idx) = interpretTableFill idx
 interpret (RS.InsTableCopy idxX idxY) = interpretTableCopy idxX idxY
 interpret (RS.InsTableInit idxX idxY) = interpretTableInit idxX idxY
 interpret (RS.InsElemDrop idx) = interpretElemDrop idx
+interpret (RS.InsTMemLoad numType memarg storeSize storeSign) = interpretMemLoad numType memarg storeSize storeSign
+interpret (RS.InsTMemStore numType memarg storeSize storeSign) = interpretMemStore numType memarg storeSize storeSign
+interpret RS.InsMemSize = interpretMemSize
+interpret RS.InsMemGrow = interpretMemGrow
+interpret RS.InsMemFill = interpretMemFill
+interpret RS.InsMemCopy = interpretMemCopy
+interpret (RS.InsMemInit idx) = interpretMemInit idx
+interpret (RS.InsDataDrop idx) = interpretDataDrop idx
 interpret _ = error "unimplemented"
 
 interpretUnaryOp :: RS.UnaryOp -> InterpretContext ()
@@ -157,7 +173,7 @@ interpretTableFill idx = do
   val <- refFromStack
   i <- popUnwrapI32
   let run
-        | i + n > genericLength (RS.tElem tab) = trapError "Index out of bounds"
+        | i + n > genericLength (RS.tElem tab) = trapError "Index out of bounds (table fill)"
         | n == 0 = return ()
         | otherwise =
           pushI32 i
@@ -182,7 +198,7 @@ interpretTableCopy idxX idxY = do
       run :: InterpretContext ()
       run
         | s + n > genericLength (RS.tElem tabY) || d + n > genericLength (RS.tElem tabX) =
-          trapError "Index out of bounds"
+          trapError "Index out of bounds (table copy)"
         | n == 0 = return ()
         | d <= s =
           pushI32 d
@@ -212,7 +228,7 @@ interpretTableInit idxX idxY = do
   let run :: InterpretContext ()
       run
         | s + n > genericLength (RS.eElem elemY) || d + n > genericLength (RS.tElem tabX) =
-          trapError "Index out of bounds"
+          trapError "Index out of bounds (table init)"
         | n == 0 = return ()
         | otherwise =
           let val = RS.eElem elemY !! fromIntegral s
@@ -230,6 +246,198 @@ interpretElemDrop idx = do
   (addr, e) <- elemAddrInstPair idx
   let updated = e {RS.eElem = []}
   setElemInstance addr updated
+
+interpretMemLoad ::
+  RS.NumberType ->
+  RS.MemArg ->
+  Maybe RS.IntStoreSize ->
+  Maybe RS.IntSign ->
+  InterpretContext ()
+interpretMemLoad numType memarg storeSize storeSign = do
+  (_, mem) <- memAddrInstPair
+  i <- popUnwrapI32
+  let ea = fromIntegral (i + fromIntegral (RS.maOffset memarg)) :: Int64
+  let n = case storeSize of
+        (Just sz) -> RS.storeSize sz
+        _ -> RS.bitWidth numType
+  let n' = fromIntegral n :: Int64
+  let memLength = BS.length (RS.mBytes mem)
+  unless
+    (fromIntegral (ea + n' `div` 8) > memLength)
+    (trapError "Requested larger than mem size")
+
+  case (storeSize, storeSign) of
+    (Just _, Just sign) -> return () -- TODO
+    _ ->
+      let bs = RS.mBytes mem
+          readPush RS.NumberTypeI32 = pushStackInjective (readFrom bs ea :: Int32)
+          readPush RS.NumberTypeI64 = pushStackInjective (readFrom bs ea :: Int64)
+          readPush RS.NumberTypeU32 = pushStackInjective (readFrom bs ea :: Word32)
+          readPush RS.NumberTypeU64 = pushStackInjective (readFrom bs ea :: Word64)
+          readPush RS.NumberTypeF32 = pushStackInjective (readFrom bs ea :: Float)
+          readPush RS.NumberTypeF64 = pushStackInjective (readFrom bs ea :: Double)
+       in readPush numType
+
+interpretMemStore ::
+  RS.NumberType ->
+  RS.MemArg ->
+  Maybe RS.IntStoreSize ->
+  Maybe RS.IntSign ->
+  InterpretContext ()
+interpretMemStore numType memarg storeSize _storeSign = do
+  (_, mem) <- memAddrInstPair
+  val <- numberFromStack
+  i <- popUnwrapI32
+  let ea = fromIntegral (i + fromIntegral (RS.maOffset memarg)) :: Int64
+  let n = case storeSize of
+        (Just sz) -> RS.storeSize sz
+        _ -> RS.bitWidth numType
+  let n' = fromIntegral n :: Int64
+  let memLength = BS.length (RS.mBytes mem)
+  unless
+    (fromIntegral (ea + n' `div` 8) > memLength)
+    (trapError "Requested larger than mem size")
+
+  let overwriteMem v = setMemInstance (RS.Addr 0) (mem {RS.mBytes = overwriteAt (RS.mBytes mem) v ea})
+
+  case storeSize of
+    (Just _) -> return () -- TODO
+    _ -> case numType of
+      RS.NumberTypeI32 -> (unwrap val :: InterpretContext Int32) >>= overwriteMem
+      RS.NumberTypeI64 -> (unwrap val :: InterpretContext Int64) >>= overwriteMem
+      RS.NumberTypeU32 -> (unwrap val :: InterpretContext Word32) >>= overwriteMem
+      RS.NumberTypeU64 -> (unwrap val :: InterpretContext Word64) >>= overwriteMem
+      RS.NumberTypeF32 -> (unwrap val :: InterpretContext Float) >>= overwriteMem
+      RS.NumberTypeF64 -> (unwrap val :: InterpretContext Double) >>= overwriteMem
+
+interpretMemSize :: InterpretContext ()
+interpretMemSize = do
+  (_, mem) <- memAddrInstPair
+  let sz = BS.length (RS.mBytes mem) `div` fromIntegral memPageSize
+  pushI32 sz
+
+interpretMemGrow :: InterpretContext ()
+interpretMemGrow = do
+  (_, mem) <- memAddrInstPair
+  let sz = BS.length (RS.mBytes mem) `div` fromIntegral memPageSize
+  n <- popUnwrapI32
+  -- TODO: Handle error when growing.
+  let end = replicate (fromIntegral n * fromIntegral memPageSize) 0 :: [Word8]
+  let updated = BS.append (RS.mBytes mem) (BS.pack end)
+  _ <- setMemInstance (RS.Addr 0) (mem {RS.mBytes = updated})
+  pushI32 sz
+
+interpretMemFill :: InterpretContext ()
+interpretMemFill = do
+  (_, mem) <- memAddrInstPair
+  n <- popUnwrapI32
+  val <- popUnwrapI32
+  d <- popUnwrapI32
+  let run :: InterpretContext ()
+      run
+        | fromIntegral (d + n) > BS.length (RS.mBytes mem) = trapError "Index out of bounds (mem fill)"
+        | n == 0 = return ()
+        | otherwise =
+          pushI32 d
+            >> pushI32 val
+            >> interpret (RS.InsTMemStore RS.NumberTypeI32 RS.MemArg {RS.maOffset = 0, RS.maAlign = 0} Nothing Nothing) -- TODO: Add store size
+            >> pushI32 (d + 1)
+            >> pushI32 val
+            >> pushI32 (n -1)
+            >> interpret RS.InsMemFill
+  run
+
+interpretMemCopy :: InterpretContext ()
+interpretMemCopy = do
+  (_, mem) <- memAddrInstPair
+  n <- popUnwrapI32
+  s <- popUnwrapI32
+  d <- popUnwrapI32
+  let l = BS.length (RS.mBytes mem)
+  let postRun :: InterpretContext ()
+      postRun = pushI32 (n -1) >> interpret RS.InsMemCopy
+
+      run :: InterpretContext ()
+      run
+        | fromIntegral (s + n) > l || fromIntegral (d + n) > l = trapError "Index out of bounds (mem copy)"
+        | n == 0 = return ()
+        | d <= s =
+          pushI32 d
+            >> pushI32 s
+            >> interpret
+              ( RS.InsTMemLoad
+                  RS.NumberTypeI32
+                  RS.MemArg {RS.maOffset = 0, RS.maAlign = 0}
+                  Nothing
+                  Nothing -- TODO: Add sign and store size
+              )
+            >> interpret
+              ( RS.InsTMemStore
+                  RS.NumberTypeI32
+                  RS.MemArg {RS.maOffset = 0, RS.maAlign = 0}
+                  Nothing
+                  Nothing -- TODO: Add sign and store size
+              )
+            >> pushI32 (d + 1)
+            >> pushI32 (s + 1)
+            >> postRun
+        | otherwise =
+          pushI32 (d + n -1)
+            >> pushI32 (s + n -1)
+            >> interpret
+              ( RS.InsTMemLoad
+                  RS.NumberTypeI32
+                  RS.MemArg {RS.maOffset = 0, RS.maAlign = 0}
+                  Nothing
+                  Nothing -- TODO: Add sign and store size
+              )
+            >> interpret
+              ( RS.InsTMemStore
+                  RS.NumberTypeI32
+                  RS.MemArg {RS.maOffset = 0, RS.maAlign = 0}
+                  Nothing
+                  Nothing -- TODO: Add sign and store size
+              )
+            >> pushI32 d
+            >> pushI32 s
+            >> postRun
+  run
+
+interpretMemInit :: Int -> InterpretContext ()
+interpretMemInit idx = do
+  (_, mem) <- memAddrInstPair
+  (_, dat) <- dataAddrInstPair idx
+  n <- popUnwrapI32
+  s <- popUnwrapI32
+  d <- popUnwrapI32
+  let ml = BS.length (RS.mBytes mem)
+  let dl = BS.length (RS.dData dat)
+  let run :: InterpretContext ()
+      run
+        | fromIntegral (s + n) > dl || fromIntegral (d + n) > ml = trapError "Index out of bounds (mem init)"
+        | n == 0 = return ()
+        | otherwise =
+          let b = BS.index (RS.dData dat) (fromIntegral s)
+           in pushI32 d
+                >> pushI32 b
+                >> interpret
+                  ( RS.InsTMemStore
+                      RS.NumberTypeI32
+                      RS.MemArg {RS.maOffset = 0, RS.maAlign = 0}
+                      Nothing
+                      Nothing -- TODO: Add sign and store size
+                  )
+                >> pushI32 (d + 1)
+                >> pushI32 (s + 1)
+                >> pushI32 (n -1)
+                >> interpret (RS.InsMemInit idx)
+  run
+
+interpretDataDrop :: Int -> InterpretContext ()
+interpretDataDrop idx = do
+  (addr, dat) <- dataAddrInstPair idx
+  let updated = dat {RS.dData = BS.empty}
+  setDataInstance addr updated
 
 -- TODO: Implement me
 evalBinaryOp ::
@@ -267,19 +475,26 @@ evalRelOp ::
   Either InterpretError RS.NumberValue
 evalRelOp _op _v1 _v2 = Right $ RS.IntValue $ RS.I32 0
 
-unwrapI32 :: RS.NumberValue -> Either InterpretError Int32
-unwrapI32 (RS.IntValue (RS.I32 v)) = Right v
-unwrapI32 _ = Left "Number value not an i32"
-
 pushBool :: Bool -> InterpretContext ()
-pushBool True = pushStack $ RS.StackValue $ RS.Number $ RS.IntValue $ RS.I32 1
-pushBool False = pushStack $ RS.StackValue $ RS.Number $ RS.IntValue $ RS.I32 0
+pushBool True = pushStack $ to (1 :: Int32)
+pushBool False = pushStack $ to (0 :: Int32)
 
 pushI32 :: Integral a => a -> InterpretContext ()
-pushI32 = pushStack . RS.StackValue . RS.Number . RS.IntValue . RS.I32 . fromIntegral
+pushI32 v = pushStack $ to (fromIntegral v :: Int32)
+
+-- | Push a value that's able to be translated into an intermediate
+-- representation onto the stack.
+pushStackInjective :: Injective a RS.StackEntry => a -> InterpretContext ()
+pushStackInjective = pushStack . to
 
 popUnwrapI32 :: InterpretContext Int32
-popUnwrapI32 = numberFromStack >>= liftEither . unwrapI32
+popUnwrapI32 = popUnwrap :: InterpretContext Int32
+
+unwrap :: MonadTrap InterpretError m => MaybeInjective RS.NumberValue b => RS.NumberValue -> m b
+unwrap = liftMaybe "Value type mismatch" . toMaybe
+
+popUnwrap :: MaybeInjective RS.NumberValue b => InterpretContext b
+popUnwrap = numberFromStack >>= unwrap
 
 pushRef :: RS.RefValue -> InterpretContext ()
 pushRef = pushStack . RS.StackValue . RS.Ref
@@ -287,14 +502,27 @@ pushRef = pushStack . RS.StackValue . RS.Ref
 -- | Get the table address and instance pair from the current frame's module at
 -- the given index.
 tableAddrInstPair :: Int -> InterpretContext (RS.Addr, RS.TableInst)
-tableAddrInstPair idx = do
-  addr <- addrFromFrameModule ((!! idx) . RS.mTableAddrs)
-  tab <- getTableInstance addr
-  return (addr, tab)
+tableAddrInstPair idx = addrInstPair RS.mTableAddrs idx RS.sTables
 
 -- | Get the element address and instance from the current frame's module.
 elemAddrInstPair :: Int -> InterpretContext (RS.Addr, RS.ElemInst)
-elemAddrInstPair idx = do
-  addr <- addrFromFrameModule ((!! idx) . RS.mElemAddrs)
-  e <- getElemInstance addr
-  return (addr, e)
+elemAddrInstPair idx = addrInstPair RS.mElemAddrs idx RS.sElems
+
+-- | Get the mem addr and instance from the current frame's module.
+memAddrInstPair :: InterpretContext (RS.Addr, RS.MemInst)
+memAddrInstPair = addrInstPair RS.mMemAddrs 0 RS.sMems
+
+dataAddrInstPair :: Int -> InterpretContext (RS.Addr, RS.DataInst)
+dataAddrInstPair idx = addrInstPair RS.mDataAddrs idx RS.sDatas
+
+-- | Get the address and instance of some entity using the providing module and
+-- store projections.
+addrInstPair ::
+  (RS.ModuleInst -> [RS.Addr]) ->
+  Int ->
+  (RS.Store -> [a]) ->
+  InterpretContext (RS.Addr, a)
+addrInstPair modProj addrIdx storeProj = do
+  addr <- addrFromFrameModule ((!! addrIdx) . modProj)
+  inst <- getInstance storeProj addr
+  return (addr, inst)
