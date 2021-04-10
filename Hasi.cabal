@@ -27,6 +27,7 @@ library
       Lib.Runtime
       Lib.Runtime.Byte
       Lib.Runtime.Context
+      Lib.Runtime.Injective
       Lib.Runtime.Interpret
       Lib.Runtime.Structure
       Lib.Structure

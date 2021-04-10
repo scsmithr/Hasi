@@ -9,6 +9,7 @@ import Data.List
 import Data.Word
 import Lib.Runtime.Byte
 import Lib.Runtime.Context
+import Lib.Runtime.Injective (Injective (..), to)
 import qualified Lib.Runtime.Structure as RS
 
 interpret :: RS.Instruction -> InterpretContext ()
@@ -258,12 +259,12 @@ interpretMemLoad insType memarg storeSize storeSign = do
     (Just _, Just sign) -> return () -- TODO
     _ ->
       let bs = RS.mBytes mem
-          readPush RS.InsTypeI32 = pushTranslatable (readFrom bs ea :: Int32)
-          readPush RS.InsTypeI64 = pushTranslatable (readFrom bs ea :: Int64)
-          readPush RS.InsTypeU32 = pushTranslatable (readFrom bs ea :: Word32)
-          readPush RS.InsTypeU64 = pushTranslatable (readFrom bs ea :: Word64)
-          readPush RS.InsTypeF32 = pushTranslatable (readFrom bs ea :: Float)
-          readPush RS.InsTypeF64 = pushTranslatable (readFrom bs ea :: Double)
+          readPush RS.InsTypeI32 = pushStackInjective (readFrom bs ea :: Int32)
+          readPush RS.InsTypeI64 = pushStackInjective (readFrom bs ea :: Int64)
+          readPush RS.InsTypeU32 = pushStackInjective (readFrom bs ea :: Word32)
+          readPush RS.InsTypeU64 = pushStackInjective (readFrom bs ea :: Word64)
+          readPush RS.InsTypeF32 = pushStackInjective (readFrom bs ea :: Float)
+          readPush RS.InsTypeF64 = pushStackInjective (readFrom bs ea :: Double)
        in readPush insType
 
 -- TODO: Implement me
@@ -315,8 +316,8 @@ pushI32 = pushStack . RS.StackValue . RS.Number . RS.IntValue . RS.I32 . fromInt
 
 -- | Push a value that's able to be translated into an intermediate
 -- representation onto the stack.
-pushTranslatable :: RS.Translatable a => a -> InterpretContext ()
-pushTranslatable = pushStack . RS.translateTo
+pushStackInjective :: Injective a RS.StackEntry => a -> InterpretContext ()
+pushStackInjective = pushStack . to
 
 popUnwrapI32 :: InterpretContext Int32
 popUnwrapI32 = numberFromStack >>= liftEither . unwrapI32

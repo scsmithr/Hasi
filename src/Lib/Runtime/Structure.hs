@@ -16,11 +16,6 @@ instance ValueTypeEq Value where
   typeEq (Ref v1) (Ref v2) = typeEq v1 v2
   typeEq _ _ = False
 
--- | Types that are able to be represented in some intermediate form on the
--- stack.
-class Translatable a where
-  translateTo :: a -> StackEntry
-
 data NumberValue = FloatValue FloatValue | IntValue IntValue deriving (Show, Eq)
 
 data IntValue
@@ -43,18 +38,6 @@ instance ValueTypeEq NumberValue where
   typeEq (FloatValue (F32 _)) (FloatValue (F32 _)) = True
   typeEq (FloatValue (F64 _)) (FloatValue (F64 _)) = True
   typeEq _ _ = False
-
-instance Translatable Word32 where translateTo = StackValue . Number . IntValue . U32
-
-instance Translatable Word64 where translateTo = StackValue . Number . IntValue . U64
-
-instance Translatable Int32 where translateTo = StackValue . Number . IntValue . I32
-
-instance Translatable Int64 where translateTo = StackValue . Number . IntValue . I64
-
-instance Translatable Float where translateTo = StackValue . Number . FloatValue . F32
-
-instance Translatable Double where translateTo = StackValue . Number . FloatValue . F64
 
 newtype Addr = Addr Int deriving (Eq, Show)
 
