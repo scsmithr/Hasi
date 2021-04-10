@@ -222,6 +222,9 @@ data Instruction
   | InsElemDrop Int
   | InsTMemLoad NumberType MemArg (Maybe IntStoreSize) (Maybe IntSign)
   | InsTMemStore NumberType MemArg (Maybe IntStoreSize) (Maybe IntSign)
+  | InsMemSize
+  | InsMemGrow
+  | InsMemFill
   deriving (Show, Eq)
 
 data Label = Label

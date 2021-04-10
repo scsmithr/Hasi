@@ -12,6 +12,10 @@ import Lib.Runtime.Context
 import Lib.Runtime.Injective (Injective (..), MaybeInjective (..), to, toMaybe)
 import qualified Lib.Runtime.Structure as RS
 
+-- | Memory page size as defined in the spec.
+memPageSize :: Int
+memPageSize = 65536
+
 interpret :: RS.Instruction -> InterpretContext ()
 interpret (RS.InsTConst val) = pushStack $ RS.StackValue $ RS.Number val
 interpret (RS.InsTUnop op) = interpretUnaryOp op
@@ -37,6 +41,9 @@ interpret (RS.InsTableInit idxX idxY) = interpretTableInit idxX idxY
 interpret (RS.InsElemDrop idx) = interpretElemDrop idx
 interpret (RS.InsTMemLoad numType memarg storeSize storeSign) = interpretMemLoad numType memarg storeSize storeSign
 interpret (RS.InsTMemStore numType memarg storeSize storeSign) = interpretMemStore numType memarg storeSize storeSign
+interpret RS.InsMemSize = interpretMemSize
+interpret RS.InsMemGrow = interpretMemGrow
+interpret RS.InsMemFill = interpretMemFill
 interpret _ = error "unimplemented"
 
 interpretUnaryOp :: RS.UnaryOp -> InterpretContext ()
@@ -163,7 +170,7 @@ interpretTableFill idx = do
   val <- refFromStack
   i <- popUnwrapI32
   let run
-        | i + n > genericLength (RS.tElem tab) = trapError "Index out of bounds"
+        | i + n > genericLength (RS.tElem tab) = trapError "Index out of bounds (table fill)"
         | n == 0 = return ()
         | otherwise =
           pushI32 i
@@ -188,7 +195,7 @@ interpretTableCopy idxX idxY = do
       run :: InterpretContext ()
       run
         | s + n > genericLength (RS.tElem tabY) || d + n > genericLength (RS.tElem tabX) =
-          trapError "Index out of bounds"
+          trapError "Index out of bounds (table copy)"
         | n == 0 = return ()
         | d <= s =
           pushI32 d
@@ -218,7 +225,7 @@ interpretTableInit idxX idxY = do
   let run :: InterpretContext ()
       run
         | s + n > genericLength (RS.eElem elemY) || d + n > genericLength (RS.tElem tabX) =
-          trapError "Index out of bounds"
+          trapError "Index out of bounds (table init)"
         | n == 0 = return ()
         | otherwise =
           let val = RS.eElem elemY !! fromIntegral s
@@ -299,6 +306,43 @@ interpretMemStore numType memarg storeSize _storeSign = do
       RS.NumberTypeU64 -> (unwrap val :: InterpretContext Word64) >>= overwriteMem
       RS.NumberTypeF32 -> (unwrap val :: InterpretContext Float) >>= overwriteMem
       RS.NumberTypeF64 -> (unwrap val :: InterpretContext Double) >>= overwriteMem
+
+interpretMemSize :: InterpretContext ()
+interpretMemSize = do
+  (_, mem) <- memAddrInstPair
+  let sz = BS.length (RS.mBytes mem) `div` fromIntegral memPageSize
+  pushI32 sz
+
+interpretMemGrow :: InterpretContext ()
+interpretMemGrow = do
+  (_, mem) <- memAddrInstPair
+  let sz = BS.length (RS.mBytes mem) `div` fromIntegral memPageSize
+  n <- popUnwrapI32
+  -- TODO: Handle error when growing.
+  let end = replicate (fromIntegral n * fromIntegral memPageSize) 0 :: [Word8]
+  let updated = BS.append (RS.mBytes mem) (BS.pack end)
+  _ <- setMemInstance (RS.Addr 0) (mem {RS.mBytes = updated})
+  pushI32 sz
+
+interpretMemFill :: InterpretContext ()
+interpretMemFill = do
+  (_, mem) <- memAddrInstPair
+  n <- popUnwrapI32
+  val <- popUnwrapI32
+  d <- popUnwrapI32
+  let run :: InterpretContext ()
+      run
+        | fromIntegral (d + n) > BS.length (RS.mBytes mem) = trapError "Index out of bounds (mem fill)"
+        | n == 0 = return ()
+        | otherwise =
+          pushI32 d
+            >> pushI32 val
+            >> interpret (RS.InsTMemStore RS.NumberTypeI32 RS.MemArg {RS.maOffset = 0, RS.maAlign = 0} Nothing Nothing)
+            >> pushI32 (d + 1)
+            >> pushI32 val
+            >> pushI32 (n -1)
+            >> interpret RS.InsMemFill
+  run
 
 -- TODO: Implement me
 evalBinaryOp ::
