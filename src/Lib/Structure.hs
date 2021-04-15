@@ -31,6 +31,12 @@ newtype ResultType = ResultType [ValueType] deriving (Show, Eq)
 
 newtype FuncType = FuncType (ResultType, ResultType) deriving (Show, Eq)
 
+returnArity :: FuncType -> Int
+returnArity (FuncType (_, ResultType rets)) = length rets
+
+funcArity :: FuncType -> Int
+funcArity (FuncType (ResultType is, _)) = length is
+
 data Limit
   = LowerBoundLimit Word32
   | BoundedLimit (Word32, Word32)

@@ -11,6 +11,7 @@ import Lib.Runtime.Byte
 import Lib.Runtime.Context
 import Lib.Runtime.Injective (Injective (..), MaybeInjective (..), to, toMaybe)
 import qualified Lib.Runtime.Structure as RS
+import qualified Lib.Structure as S
 
 -- | Memory page size as defined in the spec.
 memPageSize :: Int
@@ -47,6 +48,9 @@ interpret RS.InsMemFill = interpretMemFill
 interpret RS.InsMemCopy = interpretMemCopy
 interpret (RS.InsMemInit idx) = interpretMemInit idx
 interpret (RS.InsDataDrop idx) = interpretDataDrop idx
+interpret RS.InsNop = return ()
+interpret RS.InsUnreachable = trapError "Unreachable"
+interpret (RS.InsBlock blockType instructions) = interpretBlock blockType instructions
 interpret _ = error "unimplemented"
 
 interpretUnaryOp :: RS.UnaryOp -> InterpretContext ()
@@ -439,6 +443,36 @@ interpretDataDrop idx = do
   let updated = dat {RS.dData = BS.empty}
   setDataInstance addr updated
 
+interpretBlock :: RS.BlockType -> [RS.Instruction] -> InterpretContext ()
+interpretBlock blockType instructions = do
+  f <- currentFrame
+  funcType <- liftEither $ expandBlockType blockType (RS.frameModule f)
+  let l = RS.Label (S.returnArity funcType) instructions
+  vals <- popStackMany (S.funcArity funcType)
+  enterBlock vals instructions l
+
+interpretCall :: Int -> InterpretContext ()
+interpretCall idx = do
+  (_, func) <- funcAddrInstPair idx
+  invokeFunc func
+
+-- TODO
+invokeFunc :: RS.FuncInst -> InterpretContext ()
+invokeFunc f = do
+  return ()
+
+-- TODO: Continuation
+enterBlock :: [RS.StackEntry] -> [RS.Instruction] -> RS.Label -> InterpretContext ()
+enterBlock vals instructions label = do
+  _ <- pushStack (RS.StackLabel label)
+  -- TODO: Jump
+  return ()
+
+expandBlockType :: RS.BlockType -> RS.ModuleInst -> Either InterpretError S.FuncType
+expandBlockType (RS.BlockTypeTypeIdx idx) m = Right $ RS.mTypes m !! fromIntegral idx -- TODO: Assert length
+expandBlockType (RS.BlockTypeValueType Nothing) _ = Right $ S.FuncType (S.ResultType [], S.ResultType [])
+expandBlockType (RS.BlockTypeValueType (Just retType)) _ = Right $ S.FuncType (S.ResultType [], S.ResultType [retType])
+
 -- TODO: Implement me
 evalBinaryOp ::
   RS.BinaryOp ->
@@ -514,6 +548,9 @@ memAddrInstPair = addrInstPair RS.mMemAddrs 0 RS.sMems
 
 dataAddrInstPair :: Int -> InterpretContext (RS.Addr, RS.DataInst)
 dataAddrInstPair idx = addrInstPair RS.mDataAddrs idx RS.sDatas
+
+funcAddrInstPair :: Int -> InterpretContext (RS.Addr, RS.FuncInst)
+funcAddrInstPair idx = addrInstPair RS.mFuncAddrs idx RS.sFuncs
 
 -- | Get the address and instance of some entity using the providing module and
 -- store projections.
