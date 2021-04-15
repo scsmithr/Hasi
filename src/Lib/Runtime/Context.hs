@@ -64,6 +64,11 @@ popStack = InterpretContext $ \s -> case pop (stack s) of
   (Just val, stack') -> Right (val, s {stack = stack'})
   _ -> Left "No more values on stack"
 
+popStackMany :: Int -> InterpretContext [RS.StackEntry]
+popStackMany n =
+  let go acc m = popStack >>= \v -> (\acc2 -> go acc2 (m - 1)) (acc ++ [v])
+   in go [] n
+
 currentFrame :: InterpretContext RS.Frame
 currentFrame = InterpretContext $ \s -> case frame s of
   (Just x) -> Right (x, s)

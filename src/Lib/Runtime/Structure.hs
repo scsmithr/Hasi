@@ -228,6 +228,9 @@ data Instruction
   | InsMemCopy
   | InsMemInit Int
   | InsDataDrop Int
+  | InsNop
+  | InsUnreachable
+  | InsBlock BlockType [Instruction]
   deriving (Show, Eq)
 
 data Label = Label
@@ -247,6 +250,8 @@ data Activation = Activation
     activationFrame :: Frame
   }
   deriving (Show, Eq)
+
+data BlockType = BlockTypeTypeIdx Word32 | BlockTypeValueType (Maybe S.ValueType) deriving (Show, Eq)
 
 data StackEntry
   = StackValue Value
